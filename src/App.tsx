@@ -295,11 +295,14 @@ export function App() {
       if (vehicle) {
         setVehicles((prev) => [vehicle, ...prev]);
         fetchAllData();
-      } else if (error) {
+        return { success: true };
+      } else {
         console.warn('[App] Create vehicle error:', error);
+        return { success: false, error: error || 'خطا در ثبت موتر' };
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('[App] Create vehicle exception:', err);
+      return { success: false, error: err.message || 'خطا در ثبت موتر' };
     }
   };
 
@@ -317,11 +320,14 @@ export function App() {
       if (device) {
         setDevices((prev) => [device, ...prev]);
         fetchAllData();
-      } else if (error) {
+        return { success: true };
+      } else {
         console.warn('[App] Create device error:', error);
+        return { success: false, error: error || 'خطا در ثبت دستگاه GPS' };
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('[App] Create device exception:', err);
+      return { success: false, error: err.message || 'خطا در ثبت دستگاه GPS' };
     }
   };
 

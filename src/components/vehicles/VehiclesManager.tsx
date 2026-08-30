@@ -13,7 +13,7 @@ interface VehiclesManagerProps {
   devices: Device[];
   drivers: Driver[];
   customers?: any[];
-  onAddVehicle: (vehicle: Partial<Vehicle>) => void;
+  onAddVehicle: (vehicle: Partial<Vehicle>) => Promise<{ success: boolean; error?: string } | any> | void;
   onSelectVehicle: (vehicleId: string) => void;
 }
 
@@ -41,6 +41,9 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [driverName, setDriverName] = useState('');
   const [driverPhone, setDriverPhone] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formError, setFormError] = useState('');
+  const [formSuccess, setFormSuccess] = useState('');
 
   const filteredVehicles = vehicles.filter((v) => {
     const matchesSearch =
@@ -51,31 +54,54 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
     return matchesSearch && matchesType;
   });
 
-  const handleCreate = (e: React.FormEvent) => {
+  const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!plateNumber || !vehicleName) return;
+    if (!plateNumber.trim() || !vehicleName.trim()) {
+      setFormError('لطفاً نمبر پلیت و عنوان موتر را وارد نمایید');
+      return;
+    }
 
-    onAddVehicle({
-      plateNumber,
-      vehicleName,
-      vehicleType,
-      brand,
-      model,
-      year: 2023,
-      color: 'سفید',
-      speedLimit,
-      odometer: 0,
-      deviceId: selectedDeviceId || undefined,
-      customerId: selectedCustomerId || undefined,
-    });
+    setFormError('');
+    setFormSuccess('');
+    setIsSubmitting(true);
 
-    setIsAddModalOpen(false);
-    setPlateNumber('');
-    setVehicleName('');
-    setSelectedCustomerId('');
-    setSelectedDeviceId('');
-    setDriverName('');
-    setDriverPhone('');
+    try {
+      const res = await onAddVehicle({
+        plateNumber: plateNumber.trim(),
+        vehicleName: vehicleName.trim(),
+        vehicleType,
+        brand,
+        model,
+        year: 2023,
+        color: 'سفید',
+        speedLimit,
+        odometer: 0,
+        deviceId: selectedDeviceId.trim() || undefined,
+        customerId: selectedCustomerId.trim() || undefined,
+      });
+
+      if (res && res.success === false) {
+        setFormError(res.error || 'خطا در ثبت موتر');
+        setIsSubmitting(false);
+        return;
+      }
+
+      setFormSuccess('موتر با موفقیت در سیستم ثبت گردید.');
+      setTimeout(() => {
+        setIsAddModalOpen(false);
+        setPlateNumber('');
+        setVehicleName('');
+        setSelectedCustomerId('');
+        setSelectedDeviceId('');
+        setDriverName('');
+        setDriverPhone('');
+        setFormSuccess('');
+        setIsSubmitting(false);
+      }, 1500);
+    } catch (err: any) {
+      setFormError(err.message || 'خطا در ثبت موتر');
+      setIsSubmitting(false);
+    }
   };
 
   const getTypeNameInPersian = (type: VehicleType) => {
@@ -261,6 +287,20 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
               </button>
             </div>
 
+            {formError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg flex items-center gap-2">
+                <span className="font-bold">خطا:</span>
+                <span>{formError}</span>
+              </div>
+            )}
+
+            {formSuccess && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs rounded-lg flex items-center gap-2">
+                <span className="font-bold">موفقیت:</span>
+                <span>{formSuccess}</span>
+              </div>
+            )}
+
             <form onSubmit={handleCreate} className="space-y-3.5 text-right">
               <div>
                 <label className="block text-xs text-slate-700 font-medium mb-1">نمبر پلیت موتر (ضروری)</label>
@@ -356,9 +396,17 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium shadow-xs"
+                  disabled={isSubmitting}
+                  className="px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-500 disabled:bg-blue-400 text-white text-xs font-medium shadow-xs flex items-center gap-1.5"
                 >
-                  ذخیره و ثبت در سیستم
+                  {isSubmitting ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>در حال ثبت...</span>
+                    </>
+                  ) : (
+                    <span>ذخیره و ثبت در سیستم</span>
+                  )}
                 </button>
               </div>
             </form>

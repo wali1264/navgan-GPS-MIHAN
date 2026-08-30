@@ -146,7 +146,7 @@ export class SupabaseDataService {
   public async createVehicle(params: {
     plateNumber: string;
     vehicleName: string;
-    vehicleType?: VehicleType;
+    vehicleType?: VehicleType | string;
     customerId?: string;
     deviceId?: string;
     driverName?: string;
@@ -155,16 +155,41 @@ export class SupabaseDataService {
     created_by?: string;
   }): Promise<{ vehicle: Vehicle | null; error: string | null }> {
     try {
+      // Normalize vehicle_type to lowercase standard strings to satisfy Postgres CHECK constraint
+      const rawType = String(params.vehicleType || 'car').trim().toLowerCase();
+      let normalizedType = 'car';
+      if (rawType.includes('truck') || rawType.includes('لاری') || rawType.includes('باربری')) {
+        normalizedType = 'truck';
+      } else if (rawType.includes('bus') || rawType.includes('بس') || rawType.includes('ملی‌بس')) {
+        normalizedType = 'bus';
+      } else if (rawType.includes('van') || rawType.includes('هایس') || rawType.includes('ون')) {
+        normalizedType = 'van';
+      } else if (rawType.includes('motorcycle') || rawType.includes('موترسایکل') || rawType.includes('موتور')) {
+        normalizedType = 'motorcycle';
+      } else if (rawType.includes('taxi') || rawType.includes('تکسی') || rawType.includes('تاکسی')) {
+        normalizedType = 'taxi';
+      } else if (rawType.includes('pickup') || rawType.includes('پیک')) {
+        normalizedType = 'pickup';
+      } else if (rawType.includes('heavy') || rawType.includes('سنگین')) {
+        normalizedType = 'heavy';
+      } else {
+        normalizedType = 'car';
+      }
+
+      // Safe clean customerId and deviceId to null if empty
+      const cleanOwnerId = params.customerId && params.customerId.trim() !== '' ? params.customerId.trim() : null;
+      const cleanDeviceId = params.deviceId && params.deviceId.trim() !== '' ? params.deviceId.trim() : null;
+
       const { data, error } = await supabase
         .from('vehicles')
         .insert({
           name: params.vehicleName.trim(),
           plate_number: params.plateNumber.trim(),
-          vehicle_type: params.vehicleType || 'car',
-          owner_id: params.customerId || null,
-          device_id: params.deviceId || null,
-          driver_name: params.driverName || '',
-          driver_phone: params.driverPhone || '',
+          vehicle_type: normalizedType,
+          owner_id: cleanOwnerId,
+          device_id: cleanDeviceId,
+          driver_name: params.driverName?.trim() || '',
+          driver_phone: params.driverPhone?.trim() || '',
           max_speed_limit: params.speedLimit || 100,
           created_by: params.created_by || null,
           is_active: true,
@@ -173,7 +198,14 @@ export class SupabaseDataService {
         .single();
 
       if (error) {
-        return { vehicle: null, error: error.message };
+        return {
+          vehicle: null,
+          error: error.message.includes('vehicles_vehicle_type_check')
+            ? 'نوع واسطه نقلیه معتبر نیست'
+            : error.message.includes('unique constraint') || error.message.includes('duplicate key')
+            ? 'موتر با این نمبر پلیت قبلاً در سامانه ثبت گردیده است'
+            : error.message,
+        };
       }
 
       const v = data as any;

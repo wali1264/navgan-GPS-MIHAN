@@ -10,7 +10,7 @@ import { Cpu, Plus, Search, CheckCircle, AlertCircle, Signal, Radio, Terminal } 
 interface DevicesManagerProps {
   devices: Device[];
   vehicles: Vehicle[];
-  onAddDevice: (device: Partial<Device>) => void;
+  onAddDevice: (device: Partial<Device>) => Promise<{ success: boolean; error?: string } | any> | void;
 }
 
 export const DevicesManager: React.FC<DevicesManagerProps> = ({ devices, vehicles, onAddDevice }) => {
@@ -22,6 +22,9 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({ devices, vehicle
   const [model, setModel] = useState('Concox GT06N');
   const [simNumber, setSimNumber] = useState('');
   const [simOperator, setSimOperator] = useState('Roshan');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formError, setFormError] = useState('');
+  const [formSuccess, setFormSuccess] = useState('');
 
   const filteredDevices = devices.filter(
     (d) =>
@@ -30,22 +33,45 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({ devices, vehicle
       (d.simNumber && d.simNumber.includes(searchTerm))
   );
 
-  const handleCreate = (e: React.FormEvent) => {
+  const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!imei) return;
+    if (!imei.trim()) {
+      setFormError('لطفاً کد ۱۵ رقمی IMEI دستگاه را وارد نمایید');
+      return;
+    }
 
-    onAddDevice({
-      imei,
-      protocol,
-      model,
-      simNumber,
-      simOperator,
-      status: 'ACTIVE',
-    });
+    setFormError('');
+    setFormSuccess('');
+    setIsSubmitting(true);
 
-    setIsAddModalOpen(false);
-    setImei('');
-    setSimNumber('');
+    try {
+      const res = await onAddDevice({
+        imei: imei.trim(),
+        protocol,
+        model,
+        simNumber: simNumber.trim(),
+        simOperator,
+        status: 'ACTIVE',
+      });
+
+      if (res && res.success === false) {
+        setFormError(res.error || 'خطا در ثبت دستگاه GPS');
+        setIsSubmitting(false);
+        return;
+      }
+
+      setFormSuccess('دستگاه GPS با موفقیت در سامانه ثبت گردید.');
+      setTimeout(() => {
+        setIsAddModalOpen(false);
+        setImei('');
+        setSimNumber('');
+        setFormSuccess('');
+        setIsSubmitting(false);
+      }, 1500);
+    } catch (err: any) {
+      setFormError(err.message || 'خطا در ثبت دستگاه GPS');
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -135,6 +161,20 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({ devices, vehicle
               <button onClick={() => setIsAddModalOpen(false)} className="text-slate-400 hover:text-slate-700">✕</button>
             </div>
 
+            {formError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg flex items-center gap-2">
+                <span className="font-bold">خطا:</span>
+                <span>{formError}</span>
+              </div>
+            )}
+
+            {formSuccess && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs rounded-lg flex items-center gap-2">
+                <span className="font-bold">موفقیت:</span>
+                <span>{formSuccess}</span>
+              </div>
+            )}
+
             <form onSubmit={handleCreate} className="space-y-3.5 text-right">
               <div>
                 <label className="block text-xs text-slate-700 font-medium mb-1">کد بین‌المللی IMEI (15 رقمی)</label>
@@ -211,9 +251,17 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({ devices, vehicle
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium shadow-xs"
+                  disabled={isSubmitting}
+                  className="px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-500 disabled:bg-blue-400 text-white text-xs font-medium shadow-xs flex items-center gap-1.5"
                 >
-                  ثبت دستگاه ردیاب
+                  {isSubmitting ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>در حال ثبت...</span>
+                    </>
+                  ) : (
+                    <span>ثبت دستگاه ردیاب</span>
+                  )}
                 </button>
               </div>
             </form>

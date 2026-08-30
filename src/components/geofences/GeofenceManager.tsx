@@ -137,8 +137,8 @@ export const GeofenceManager: React.FC<GeofenceManagerProps> = ({
 
       {/* Modal */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-100 rounded-xl w-full max-w-md p-6 shadow-xl space-y-4 text-right">
+        <div className="fixed inset-0 z-[99999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-100 rounded-xl w-full max-w-md p-6 shadow-2xl space-y-4 text-right z-[100000]">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h2 className="text-base font-bold text-slate-900">ایجاد محدوده جغرافیایی (Geofence)</h2>
               <button onClick={() => setIsAddModalOpen(false)} className="text-slate-400 hover:text-slate-700">✕</button>

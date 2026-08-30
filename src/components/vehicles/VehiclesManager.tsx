@@ -249,8 +249,8 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
 
       {/* Add Vehicle Modal */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-100 rounded-xl w-full max-w-lg p-6 shadow-xl space-y-4">
+        <div className="fixed inset-0 z-[99999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-100 rounded-xl w-full max-w-lg p-6 shadow-2xl space-y-4 z-[100000]">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h2 className="text-base font-bold text-slate-900">ثبت موتر جدید در سامانه ردیابی</h2>
               <button

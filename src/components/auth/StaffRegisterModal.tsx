@@ -70,8 +70,8 @@ export const StaffRegisterModal: React.FC<StaffRegisterModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 overflow-y-auto">
-      <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 animate-in fade-in zoom-in duration-200">
+    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4 overflow-y-auto font-sans">
+      <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-8 animate-in fade-in zoom-in duration-200 z-[100000]">
         
         {/* Header */}
         <div className="bg-gradient-to-r from-slate-900 to-slate-800 p-6 text-white text-center relative">

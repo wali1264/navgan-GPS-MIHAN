@@ -55,24 +55,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeVehiclesCount,
   alertsCount,
 }) => {
-  const isAdmin = userRole === UserRole.SUPER_ADMIN || userRole === UserRole.COMPANY_ADMIN;
+  const isSuperAdmin = userRole === UserRole.SUPER_ADMIN;
 
   const menuItems = [
-    { id: 'dashboard', label: 'پیشخوان مدیریتی', icon: LayoutDashboard },
     { id: 'map', label: 'نقشه و ردیابی زنده', icon: MapPin, badge: activeVehiclesCount },
     { id: 'vehicles', label: 'وسایط نقلیه', icon: Car },
-    ...(isAdmin ? [{ id: 'devices', label: 'دستگاه‌های GPS', icon: Cpu }] : []),
+    { id: 'customers', label: 'مدیریت مشتریان و مشترکین', icon: Building2 },
+    { id: 'devices', label: 'دستگاه‌های GPS', icon: Cpu },
+    { id: 'dashboard', label: 'پیشخوان مدیریتی', icon: LayoutDashboard },
     { id: 'history', label: 'تاریخچه و بازپخش مسیر', icon: History },
     { id: 'geofences', label: 'محدوده‌های جغرافیایی', icon: ShieldAlert },
     { id: 'events', label: 'رویدادها و هشدارها', icon: Bell, badge: alertsCount > 0 ? alertsCount : undefined, badgeColor: 'bg-rose-500' },
+    { id: 'drivers', label: 'درایوران و رانندگان', icon: Users },
     { id: 'reports', label: 'گزارش‌های دوره‌ای', icon: FileSpreadsheet },
-    ...(isAdmin ? [{ id: 'drivers', label: 'درایوران و رانندگان', icon: Users }] : []),
-    ...(isAdmin ? [{ id: 'customers', label: 'مدیریت مشتریان و مشترکین', icon: Building2 }] : []),
-    ...(userRole === UserRole.SUPER_ADMIN ? [{ id: 'staff', label: 'پرسنل و تایید دسترسی', icon: UserCheck }] : []),
-    ...(isAdmin ? [{ id: 'commands', label: 'ارسال دستورات (Commands)', icon: Terminal }] : []),
-    ...(isAdmin ? [{ id: 'diagnostics', label: 'عیب‌یابی پکت‌ها و سرور', icon: Activity }] : []),
+    { id: 'commands', label: 'ارسال دستورات (Commands)', icon: Terminal },
+    { id: 'diagnostics', label: 'عیب‌یابی پکت‌ها و سرور', icon: Activity },
     { id: 'maintenance', label: 'مراقبت و سرویس موتر', icon: Wrench },
-    ...(isAdmin ? [{ id: 'audit', label: 'لاگ فعالیت‌ها (Audit Log)', icon: FileText }] : []),
+    ...(isSuperAdmin ? [{ id: 'staff', label: 'پرسنل و تایید دسترسی', icon: UserCheck }] : []),
+    ...(isSuperAdmin ? [{ id: 'audit', label: 'لاگ فعالیت‌ها (Audit Log)', icon: FileText }] : []),
   ];
 
   return (

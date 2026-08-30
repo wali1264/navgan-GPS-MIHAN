@@ -96,15 +96,17 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
 
-        {/* Subtle Staff Registration Button (for internal team / admin registration) */}
-        <button
-          onClick={onOpenStaffRegister}
-          className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-200 transition cursor-pointer"
-          title="ثبت‌نام پرسنل یا مدیر جدید"
-        >
-          <UserPlus className="w-3.5 h-3.5 text-slate-500" />
-          <span>ثبت‌نام پرسنل</span>
-        </button>
+        {/* Subtle Staff Registration Button (only for super_admin / managers) */}
+        {isSuperAdmin && (
+          <button
+            onClick={onOpenStaffRegister}
+            className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-200 transition cursor-pointer"
+            title="ثبت‌نام پرسنل یا مدیر جدید"
+          >
+            <UserPlus className="w-3.5 h-3.5 text-slate-500" />
+            <span>ثبت‌نام پرسنل</span>
+          </button>
+        )}
 
         {/* Role Switcher */}
         <div className="hidden xl:flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200/80">

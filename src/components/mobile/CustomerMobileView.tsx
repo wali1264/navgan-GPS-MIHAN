@@ -6,7 +6,7 @@ import React, { useState } from 'react';
 import { Vehicle, VehicleCurrentState, FleetEvent, User } from '../../shared/types/models';
 import { MobileNav, MobileTab } from '../common/MobileNav';
 import { FleetMap } from '../map/FleetMap';
-import { Car, Navigation, Shield, Key, Battery, Signal, Bell, Phone, MapPin, Gauge, ChevronLeft, PowerOff, CheckCircle } from 'lucide-react';
+import { Car, Navigation, Shield, Key, Battery, Signal, Bell, Phone, MapPin, Gauge, ChevronLeft, PowerOff, CheckCircle, KeyRound, LogOut } from 'lucide-react';
 import { VehicleStatus } from '../../shared/types/enums';
 
 interface CustomerMobileViewProps {
@@ -16,6 +16,8 @@ interface CustomerMobileViewProps {
   events: FleetEvent[];
   onSelectVehicle: (vehicleId: string) => void;
   selectedVehicleId?: string;
+  onChangePassword?: () => void;
+  onLogout?: () => void;
 }
 
 export const CustomerMobileView: React.FC<CustomerMobileViewProps> = ({
@@ -25,6 +27,8 @@ export const CustomerMobileView: React.FC<CustomerMobileViewProps> = ({
   events,
   onSelectVehicle,
   selectedVehicleId,
+  onChangePassword,
+  onLogout,
 }) => {
   const [activeTab, setActiveTab] = useState<MobileTab>('home');
   const [activeVehicleModalId, setActiveVehicleModalId] = useState<string | null>(null);
@@ -217,18 +221,51 @@ export const CustomerMobileView: React.FC<CustomerMobileViewProps> = ({
               <p className="text-xs text-blue-600 font-medium">{currentUser.email}</p>
             </div>
 
+            {/* Quick Actions */}
+            <div className="space-y-2">
+              {onChangePassword && (
+                <button
+                  onClick={onChangePassword}
+                  className="w-full bg-white border border-slate-200 p-3.5 rounded-xl flex items-center justify-between text-xs font-semibold text-slate-800 hover:bg-slate-50 transition shadow-xs cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+                      <KeyRound className="w-4 h-4" />
+                    </div>
+                    <span>تغییر رمز عبور</span>
+                  </div>
+                  <ChevronLeft className="w-4 h-4 text-slate-400" />
+                </button>
+              )}
+
+              {onLogout && (
+                <button
+                  onClick={onLogout}
+                  className="w-full bg-white border border-rose-100 p-3.5 rounded-xl flex items-center justify-between text-xs font-semibold text-rose-600 hover:bg-rose-50 transition shadow-xs cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center">
+                      <LogOut className="w-4 h-4" />
+                    </div>
+                    <span>خروج از حساب کاربری</span>
+                  </div>
+                  <ChevronLeft className="w-4 h-4 text-rose-400" />
+                </button>
+              )}
+            </div>
+
             <div className="bg-white border border-slate-100 p-4 rounded-xl space-y-2.5 text-xs text-slate-600 shadow-xs">
               <div className="flex justify-between py-1.5 border-b border-slate-100">
-                <span>سازمان / شرکت:</span>
-                <span className="text-slate-900 font-semibold">کابل لوجستیک افغانستان</span>
+                <span>وضعیت حساب:</span>
+                <span className="text-emerald-600 font-bold">● فعال و متصل به ماهواره</span>
               </div>
               <div className="flex justify-between py-1.5 border-b border-slate-100">
                 <span>زبان برنامه:</span>
                 <span className="text-slate-900 font-semibold">فارسی / دری (RTL)</span>
               </div>
-              <div className="flex justify-between py-1.5 border-b border-slate-100">
-                <span>نسخه اپلیکیشن:</span>
-                <span className="text-blue-600 font-mono font-bold">v1.2.0 (Capacitor Android)</span>
+              <div className="flex justify-between py-1.5">
+                <span>پروتکل امنیتی:</span>
+                <span className="text-blue-600 font-mono font-bold">Supabase Auth (PostgreSQL)</span>
               </div>
             </div>
           </div>

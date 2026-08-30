@@ -9,6 +9,7 @@ import { VehicleStatus, ProtocolType } from '../shared/types/enums.js';
 import { StorageRepository, globalStorageRepository } from './storage-repository.js';
 import { TripEngine } from './trip-engine.js';
 import { EventEngine } from './event-engine.js';
+import { persistGpsTelemetryToSupabase } from '../server/supabase-admin.js';
 
 export type StateChangeCallback = (state: VehicleCurrentState, newEvents: FleetEvent[]) => void;
 
@@ -117,6 +118,22 @@ export class StateEngine {
       originalProtocol: position.originalProtocol,
     };
     this.repository.addPositionRecord(posRecord);
+
+    // Asynchronously write telemetry to Supabase database
+    persistGpsTelemetryToSupabase({
+      imei: position.imei,
+      lat: position.latitude,
+      lng: position.longitude,
+      speed: position.speed,
+      heading: position.heading,
+      altitude: position.altitude,
+      ignition: Boolean(position.ignition),
+      batteryLevel: Math.round(position.batteryPercentage || (position.batteryVoltage ? (position.batteryVoltage / 13.0) * 100 : 95)),
+      gsmSignal: position.gsmSignal || 90,
+      satellites: position.satellites || 12,
+      rawPacket: position.rawMetadata ? JSON.stringify(position.rawMetadata) : '',
+      timestamp: position.timestamp,
+    }).catch((err) => console.warn('[Supabase Telemetry Error]', err));
 
     // 5. Run Trip & Stop Detection
     this.tripEngine.processPosition(posRecord);

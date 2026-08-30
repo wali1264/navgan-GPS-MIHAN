@@ -1,6 +1,10 @@
 {
-  "name": "سامانه ردیابی و مدیریت ناوگان GPS (افغانستان)",
+  "name": "1 سامانه ردیابی و مدیریت ناوگان GPS (افغانستان)",
   "description": "سامانه جامع و سازمانی ردیابی و نظارت بر ناوگان وسایط نقلیه با پشتیبانی چندپروتکل، گیت‌وی اختصاصی، وب ادمین، اپ موبایل و پشتیبانی از زبان فارسی/دری",
-  "requestFramePermissions": ["geolocation"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

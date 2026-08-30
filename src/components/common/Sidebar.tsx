@@ -19,6 +19,7 @@ import {
   FileText,
   Radio,
   ChevronLeft,
+  UserCheck,
 } from 'lucide-react';
 import { UserRole } from '../../shared/types/enums';
 
@@ -29,6 +30,7 @@ export type NavTab =
   | 'devices'
   | 'drivers'
   | 'customers'
+  | 'staff'
   | 'history'
   | 'geofences'
   | 'events'
@@ -65,7 +67,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'events', label: 'رویدادها و هشدارها', icon: Bell, badge: alertsCount > 0 ? alertsCount : undefined, badgeColor: 'bg-rose-500' },
     { id: 'reports', label: 'گزارش‌های دوره‌ای', icon: FileSpreadsheet },
     ...(isAdmin ? [{ id: 'drivers', label: 'درایوران و رانندگان', icon: Users }] : []),
-    ...(isAdmin ? [{ id: 'customers', label: 'مدیریت ذینفعان', icon: Building2 }] : []),
+    ...(isAdmin ? [{ id: 'customers', label: 'مدیریت مشتریان و مشترکین', icon: Building2 }] : []),
+    ...(userRole === UserRole.SUPER_ADMIN ? [{ id: 'staff', label: 'پرسنل و تایید دسترسی', icon: UserCheck }] : []),
     ...(isAdmin ? [{ id: 'commands', label: 'ارسال دستورات (Commands)', icon: Terminal }] : []),
     ...(isAdmin ? [{ id: 'diagnostics', label: 'عیب‌یابی پکت‌ها و سرور', icon: Activity }] : []),
     { id: 'maintenance', label: 'مراقبت و سرویس موتر', icon: Wrench },

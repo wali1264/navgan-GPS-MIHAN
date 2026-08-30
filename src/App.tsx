@@ -1,6 +1,7 @@
 /**
  * Main Application Component
- * Integrates real-time WebSocket state updates, REST APIs, responsive Desktop & Mobile layouts,
+ * Integrates real-time WebSocket state updates, Supabase PostgreSQL persistence,
+ * unified authentication flow (Admin, Staff, Client), Staff approval workflows,
  * and comprehensive fleet management subsystems.
  */
 import React, { useState, useEffect, useCallback } from 'react';
@@ -19,16 +20,33 @@ import { ReportsView } from './components/reports/ReportsView';
 import { MaintenanceView } from './components/maintenance/MaintenanceView';
 import { CustomersManager } from './components/customers/CustomersManager';
 import { DriversManager } from './components/drivers/DriversManager';
+import { StaffManager } from './components/staff/StaffManager';
 import { CustomerMobileView } from './components/mobile/CustomerMobileView';
+import { LoginModal } from './components/auth/LoginModal';
+import { StaffRegisterModal } from './components/auth/StaffRegisterModal';
+import { PendingApprovalScreen } from './components/auth/PendingApprovalScreen';
+import { AuthScreen } from './components/auth/AuthScreen';
+import { ChangePasswordModal } from './components/auth/ChangePasswordModal';
 import { UserRole, VehicleStatus, CommandType } from './shared/types/enums';
 import { Vehicle, Device, Customer, Driver, VehicleCurrentState, Geofence, FleetEvent, DeviceCommand, User, PositionRecord } from './shared/types/models';
+import { supabase, UserProfile } from './lib/supabase';
+import { globalAuthService } from './services/auth-service';
+import { globalSupabaseDataService } from './services/supabase-data-service';
 
 export function App() {
+  // Supabase Authenticated Profile State
+  const [currentProfile, setCurrentProfile] = useState<UserProfile | null>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
+  const [isStaffRegisterOpen, setIsStaffRegisterOpen] = useState<boolean>(false);
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState<boolean>(false);
+
+  // Fallback User representation for compatibility
   const [currentUser, setCurrentUser] = useState<User>({
     id: 'usr-admin-01',
     organizationId: 'org-afg-01',
     role: UserRole.SUPER_ADMIN,
-    fullName: 'مدیر ارشد سامانه (Admin)',
+    fullName: 'مدیر ارشد سامانه',
     email: 'admin@afggps.af',
     status: 'ACTIVE',
   });
@@ -48,7 +66,60 @@ export function App() {
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | undefined>(undefined);
   const [statusFilter, setStatusFilter] = useState<VehicleStatus | undefined>(undefined);
 
-  // Fetch initial datasets
+  // Check Supabase Auth Session on Mount
+  const refreshUserProfile = useCallback(async () => {
+    try {
+      const profile = await globalAuthService.getActiveUserProfile();
+      setCurrentProfile(profile);
+
+      if (profile) {
+        // Map to internal user
+        const mappedRole =
+          profile.role === 'super_admin'
+            ? UserRole.SUPER_ADMIN
+            : profile.role === 'staff'
+            ? UserRole.OPERATOR
+            : UserRole.CUSTOMER;
+
+        setCurrentUser({
+          id: profile.id,
+          organizationId: 'org-afg-01',
+          role: mappedRole,
+          fullName: profile.full_name,
+          email: profile.email || `${profile.username}@navgan.af`,
+          status: profile.status === 'approved' ? 'ACTIVE' : 'INACTIVE',
+          customerId: profile.role === 'client' ? profile.id : undefined,
+        });
+
+        // Switch to mobile client view if role is client
+        if (profile.role === 'client') {
+          setIsMobileView(true);
+        }
+      }
+    } catch (e) {
+      console.warn('[App] Auth refresh exception:', e);
+    } finally {
+      setIsAuthChecking(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshUserProfile();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (session?.user) {
+        refreshUserProfile();
+      } else {
+        setCurrentProfile(null);
+      }
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, [refreshUserProfile]);
+
+  // Fetch datasets from API and Supabase
   const fetchAllData = useCallback(async () => {
     try {
       const [vRes, dRes, cRes, drRes, sRes, gRes, eRes, cmdRes] = await Promise.all([
@@ -77,8 +148,7 @@ export function App() {
 
   useEffect(() => {
     fetchAllData();
-    // Fallback periodic poll in case WebSocket is reconnecting
-    const interval = setInterval(fetchAllData, 6000);
+    const interval = setInterval(fetchAllData, 7000);
     return () => clearInterval(interval);
   }, [fetchAllData]);
 
@@ -124,7 +194,7 @@ export function App() {
         ws.onclose = () => {
           reconnectTimeout = setTimeout(connectWs, 3000);
         };
-      } catch (err) {
+      } catch {
         reconnectTimeout = setTimeout(connectWs, 3000);
       }
     }
@@ -153,6 +223,20 @@ export function App() {
     } catch (err) {
       console.warn(err);
     }
+  };
+
+  const handleLogout = async () => {
+    await globalAuthService.signOut();
+    setCurrentProfile(null);
+    setCurrentUser({
+      id: 'usr-admin-01',
+      organizationId: 'org-afg-01',
+      role: UserRole.SUPER_ADMIN,
+      fullName: 'مدیر ارشد سامانه',
+      email: 'admin@afggps.af',
+      status: 'ACTIVE',
+    });
+    setIsMobileView(false);
   };
 
   const handleAddVehicle = async (vehData: Partial<Vehicle>) => {
@@ -261,19 +345,112 @@ export function App() {
     ? currentStates.filter((s) => s.onlineStatus === statusFilter)
     : currentStates;
 
-  // Render Customer Mobile Experience if toggled
-  if (isMobileView) {
+  // 1. Initial Authentication Check Loader
+  if (isAuthChecking) {
     return (
-      <CustomerMobileView
-        currentUser={currentUser}
-        vehicles={vehicles}
-        currentStates={currentStates}
-        events={events}
-        onSelectVehicle={(id) => {
-          setSelectedVehicleId(id);
-        }}
-        selectedVehicleId={selectedVehicleId}
+      <div className="min-h-screen bg-[#F4F7F9] flex flex-col items-center justify-center p-4 font-sans" dir="rtl">
+        <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm max-w-sm w-full text-center space-y-4">
+          <div className="w-12 h-12 rounded-xl bg-blue-600 flex items-center justify-center mx-auto shadow-xs text-white">
+            <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          </div>
+          <div>
+            <h3 className="font-bold text-slate-800 text-base">در حال بررسی احراز هویت...</h3>
+            <p className="text-xs text-slate-500 mt-1">اتصال به سامانه ملی ردیابی ناوگان GPS</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. If user is NOT logged in, show AuthScreen full screen (system is locked)
+  if (!currentProfile) {
+    return (
+      <div className="min-h-screen bg-[#F4F7F9] font-sans" dir="rtl">
+        <AuthScreen
+          onSuccess={(profile) => {
+            setCurrentProfile(profile);
+            refreshUserProfile();
+          }}
+          onOpenStaffRegister={() => setIsStaffRegisterOpen(true)}
+        />
+
+        {/* Staff Register Modal (accessible from AuthScreen for admins/staff) */}
+        <StaffRegisterModal
+          isOpen={isStaffRegisterOpen}
+          onClose={() => setIsStaffRegisterOpen(false)}
+          onSuccess={(profile) => {
+            setCurrentProfile(profile);
+            refreshUserProfile();
+          }}
+          onOpenLogin={() => setIsStaffRegisterOpen(false)}
+        />
+      </div>
+    );
+  }
+
+  // 3. If user is logged in with pending or suspended status, block and display pending status screen
+  if (currentProfile.status === 'pending' || currentProfile.status === 'suspended') {
+    return (
+      <PendingApprovalScreen
+        profile={currentProfile}
+        onRefreshProfile={refreshUserProfile}
+        onLogout={handleLogout}
       />
+    );
+  }
+
+  // 4. Vehicle scoping for clients
+  const clientVehicles = currentProfile.role === 'client'
+    ? vehicles.filter(
+        (v) =>
+          v.customerId === currentProfile.id ||
+          (v as any).owner_id === currentProfile.id ||
+          (v as any).user_id === currentProfile.id
+      )
+    : vehicles;
+
+  const clientVehicleIds = new Set(clientVehicles.map((v) => v.id));
+  const clientStates = currentProfile.role === 'client'
+    ? currentStates.filter((s) => clientVehicleIds.has(s.vehicleId))
+    : currentStates;
+
+  // 5. Render Customer Mobile Experience if toggled or if client role
+  if (isMobileView || currentProfile.role === 'client') {
+    return (
+      <div className="relative font-sans" dir="rtl">
+        <CustomerMobileView
+          currentUser={currentUser}
+          vehicles={clientVehicles.length > 0 ? clientVehicles : vehicles}
+          currentStates={clientStates.length > 0 ? clientStates : currentStates}
+          events={events}
+          onSelectVehicle={(id) => {
+            setSelectedVehicleId(id);
+          }}
+          selectedVehicleId={selectedVehicleId}
+          onChangePassword={() => setIsChangePasswordOpen(true)}
+          onLogout={handleLogout}
+        />
+        {/* Toggle back button for admin / staff testing */}
+        {currentProfile.role !== 'client' && (
+          <div className="fixed bottom-4 left-4 z-50">
+            <button
+              onClick={() => setIsMobileView(false)}
+              className="px-3.5 py-1.5 bg-slate-900 text-white rounded-full text-xs font-semibold shadow-lg hover:bg-slate-800 transition cursor-pointer"
+            >
+              ← بازگشت به پنل مدیریت
+            </button>
+          </div>
+        )}
+
+        {/* Change Password Modal */}
+        {currentProfile && (
+          <ChangePasswordModal
+            isOpen={isChangePasswordOpen}
+            onClose={() => setIsChangePasswordOpen(false)}
+            currentProfile={currentProfile}
+          />
+        )}
+      </div>
     );
   }
 
@@ -282,11 +459,16 @@ export function App() {
       {/* Header */}
       <Header
         currentUser={currentUser}
+        currentProfile={currentProfile}
         onSwitchRole={handleSwitchRole}
         activeAlertsCount={activeAlertsCount}
         onRefresh={fetchAllData}
         isMobileView={isMobileView}
         onToggleMobileView={() => setIsMobileView(!isMobileView)}
+        onOpenLogin={() => setIsLoginModalOpen(true)}
+        onOpenStaffRegister={() => setIsStaffRegisterOpen(true)}
+        onChangePassword={() => setIsChangePasswordOpen(true)}
+        onLogout={handleLogout}
       />
 
       {/* Main App Layout */}
@@ -312,7 +494,9 @@ export function App() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
                   <h1 className="text-2xl font-bold text-slate-900">پیشخوان مانیتورینگ و وضعیت ناوگان</h1>
-                  <p className="text-slate-500 text-xs mt-1">آخرین تلمتری دریافتی از گیت‌وی کابل - {new Date().toLocaleTimeString('fa-AF')}</p>
+                  <p className="text-slate-500 text-xs mt-1">
+                    اتصال فعال به پایگاه داده Supabase PostgreSQL - {new Date().toLocaleTimeString('fa-AF')}
+                  </p>
                 </div>
                 <div className="flex gap-2">
                   <button
@@ -343,7 +527,7 @@ export function App() {
 
               {/* Central Interactive Map & Quick Sidebar */}
               <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                <div className="lg:col-span-3 h-[540px] bg-white p-2 rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+                <div className="lg:col-span-3 h-[540px] bg-white p-2 rounded-xl border border-slate-100 shadow-xs overflow-hidden">
                   <FleetMap
                     vehicles={vehicles}
                     currentStates={displayedStates}
@@ -355,7 +539,7 @@ export function App() {
                 </div>
 
                 {/* Live Fleet Quick Sidebar */}
-                <div className="bg-white border border-slate-100 rounded-xl p-4 shadow-sm flex flex-col h-[540px]">
+                <div className="bg-white border border-slate-100 rounded-xl p-4 shadow-xs flex flex-col h-[540px]">
                   <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                     <h3 className="text-sm font-bold text-slate-800">وضعیت زنده وسایط</h3>
                     <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-md font-mono font-bold">
@@ -416,12 +600,12 @@ export function App() {
           {/* TAB 2: LIVE MAP */}
           {activeTab === 'map' && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between bg-white p-3.5 rounded-xl border border-slate-100 shadow-sm">
+              <div className="flex items-center justify-between bg-white p-3.5 rounded-xl border border-slate-100 shadow-xs">
                 <div className="flex items-center gap-2 text-xs">
                   <span className="text-slate-500 font-medium">فیلتر وضعیت ناوگان:</span>
                   <button
                     onClick={() => setStatusFilter(undefined)}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition cursor-pointer ${
                       !statusFilter ? 'bg-blue-600 text-white shadow-xs' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                     }`}
                   >
@@ -429,7 +613,7 @@ export function App() {
                   </button>
                   <button
                     onClick={() => setStatusFilter(VehicleStatus.MOVING)}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition cursor-pointer ${
                       statusFilter === VehicleStatus.MOVING
                         ? 'bg-emerald-600 text-white shadow-xs'
                         : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
@@ -439,7 +623,7 @@ export function App() {
                   </button>
                   <button
                     onClick={() => setStatusFilter(VehicleStatus.STOPPED)}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition cursor-pointer ${
                       statusFilter === VehicleStatus.STOPPED
                         ? 'bg-slate-800 text-white shadow-xs'
                         : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
@@ -450,7 +634,7 @@ export function App() {
                 </div>
               </div>
 
-              <div className="h-[calc(100vh-180px)] bg-white p-2 rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+              <div className="h-[calc(100vh-180px)] bg-white p-2 rounded-xl border border-slate-100 shadow-xs overflow-hidden">
                 <FleetMap
                   vehicles={vehicles}
                   currentStates={displayedStates}
@@ -530,15 +714,31 @@ export function App() {
             />
           )}
 
-          {/* TAB 10: CUSTOMERS */}
+          {/* TAB 10: CUSTOMERS / CLIENT ONBOARDING */}
           {activeTab === 'customers' && (
             <CustomersManager
               customers={customers}
               vehicles={vehicles}
+              currentAdmin={currentProfile || undefined}
             />
           )}
 
-          {/* TAB 11: COMMANDS */}
+          {/* TAB 11: STAFF MANAGEMENT (SUPER ADMIN ONLY) */}
+          {activeTab === 'staff' && (
+            <StaffManager
+              currentAdmin={currentProfile || {
+                id: 'super-admin-01',
+                username: 'superadmin',
+                full_name: 'مدیر ارشد سامانه',
+                role: 'super_admin',
+                status: 'approved',
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              }}
+            />
+          )}
+
+          {/* TAB 12: COMMANDS */}
           {activeTab === 'commands' && (
             <CommandsView
               vehicles={vehicles}
@@ -548,18 +748,50 @@ export function App() {
             />
           )}
 
-          {/* TAB 12: DIAGNOSTICS */}
+          {/* TAB 13: DIAGNOSTICS */}
           {activeTab === 'diagnostics' && (
             <DiagnosticsView />
           )}
 
-          {/* TAB 13: MAINTENANCE */}
+          {/* TAB 14: MAINTENANCE */}
           {activeTab === 'maintenance' && (
             <MaintenanceView vehicles={vehicles} />
           )}
         </main>
       </div>
+
+      {/* Login Modal */}
+      <LoginModal
+        isOpen={isLoginModalOpen}
+        onClose={() => setIsLoginModalOpen(false)}
+        onSuccess={(profile) => {
+          setCurrentProfile(profile);
+          refreshUserProfile();
+        }}
+        onOpenStaffRegister={() => setIsStaffRegisterOpen(true)}
+      />
+
+      {/* Staff Register Modal */}
+      <StaffRegisterModal
+        isOpen={isStaffRegisterOpen}
+        onClose={() => setIsStaffRegisterOpen(false)}
+        onSuccess={(profile) => {
+          setCurrentProfile(profile);
+          refreshUserProfile();
+        }}
+        onOpenLogin={() => setIsLoginModalOpen(true)}
+      />
+
+      {/* Change Password Modal */}
+      {currentProfile && (
+        <ChangePasswordModal
+          isOpen={isChangePasswordOpen}
+          onClose={() => setIsChangePasswordOpen(false)}
+          currentProfile={currentProfile}
+        />
+      )}
     </div>
   );
 }
+
 export default App;

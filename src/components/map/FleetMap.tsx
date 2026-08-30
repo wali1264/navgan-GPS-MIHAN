@@ -42,41 +42,41 @@ export const FleetMap: React.FC<FleetMapProps> = ({
   const routePolylineRef = useRef<L.Polyline | null>(null);
   const playbackMarkerRef = useRef<L.Marker | null>(null);
 
-  const [mapTileLayer, setMapTileLayer] = useState<MapTileTheme>('osm_voyager');
+  const [mapTileLayer, setMapTileLayer] = useState<MapTileTheme>('osm_standard');
   const [showLayerMenu, setShowLayerMenu] = useState(false);
   const [showGeofences, setShowGeofences] = useState(true);
   const [followSelected, setFollowSelected] = useState(true);
 
-  // Map Tile Definitions (All 100% Free & Open Source OSM based)
+  // Map Tile Definitions (All 100% Free & Open Source OSM based - Zero Watermark)
   const TILE_CONFIGS: Record<MapTileTheme, { url: string; label: string; attribution: string; sub: string }> = {
-    osm_voyager: {
-      label: 'نقشه خیابانی مدرن (مشابه گوگل مپ)',
-      sub: 'OpenStreetMap Voyager - رنگی و دقیق',
-      url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; CARTO',
-    },
     osm_standard: {
-      label: 'نقشه استاندارد متن‌باز',
-      sub: 'OpenStreetMap Standard Org',
+      label: 'نقشه استاندارد خیابان‌ها (OSM)',
+      sub: 'OpenStreetMap Standard Org - دقیق و بدون واترمارک',
       url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     },
     osm_hot: {
       label: 'نقشه ترابری و جاده‌ها (HOT)',
-      sub: 'Humanitarian OSM - تفکیک عالی راه‌ها',
+      sub: 'Humanitarian OSM - تفکیک عالی راه‌ها و بزرگراه‌ها',
       url: 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, Tiles style by Humanitarian OpenStreetMap Team',
     },
     satellite: {
-      label: 'تصویر ماهواره‌ای باکیفیت (Satellite HD)',
-      sub: 'ArcGIS World Imagery Satellite',
+      label: 'تصویر ماهواره‌ای HD (Satellite)',
+      sub: 'ArcGIS World Imagery Satellite - وضوح بالا',
       url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
       attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+    },
+    osm_voyager: {
+      label: 'نقشه روشن و ملایم (Voyager)',
+      sub: 'CartoDB Voyager Base',
+      url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
+      attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
     },
     dark: {
       label: 'نقشه تم تیره (Night Mode)',
       sub: 'CartoDB Dark Matter',
-      url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+      url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
       attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
     },
   };

@@ -16,6 +16,15 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   },
 });
 
+// Secondary isolated client with non-persisting session for safe background client onboarding
+export const supabaseNonPersist = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+    detectSessionInUrl: false,
+  },
+});
+
 export type DbRole = 'super_admin' | 'staff' | 'client';
 export type DbStatus = 'pending' | 'approved' | 'suspended' | 'rejected';
 

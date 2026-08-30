@@ -3,7 +3,7 @@
  * Supports unified login (Admin, Staff, Client), Staff self-registration with approval flow,
  * Super Admin staff approvals/suspensions, and Client onboarding with audit trails.
  */
-import { supabase, UserProfile, DbRole, DbStatus } from '../lib/supabase';
+import { supabase, supabaseNonPersist, UserProfile, DbRole, DbStatus } from '../lib/supabase';
 
 // Helper to normalize username/phone into a Supabase Auth email format
 export function normalizeAuthEmail(identifier: string): string {
@@ -178,7 +178,7 @@ export class AuthService {
     try {
       const email = normalizeAuthEmail(params.username);
       
-      const { data: authData, error: authErr } = await supabase.auth.signUp({
+      const { data: authData, error: authErr } = await supabaseNonPersist.auth.signUp({
         email,
         password: params.password,
         options: {

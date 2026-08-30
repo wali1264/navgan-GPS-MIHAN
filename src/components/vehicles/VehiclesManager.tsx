@@ -12,6 +12,7 @@ interface VehiclesManagerProps {
   currentStates: VehicleCurrentState[];
   devices: Device[];
   drivers: Driver[];
+  customers?: any[];
   onAddVehicle: (vehicle: Partial<Vehicle>) => void;
   onSelectVehicle: (vehicleId: string) => void;
 }
@@ -21,6 +22,7 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
   currentStates,
   devices,
   drivers,
+  customers = [],
   onAddVehicle,
   onSelectVehicle,
 }) => {
@@ -36,6 +38,9 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
   const [model, setModel] = useState('Corolla');
   const [speedLimit, setSpeedLimit] = useState(100);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
+  const [selectedCustomerId, setSelectedCustomerId] = useState('');
+  const [driverName, setDriverName] = useState('');
+  const [driverPhone, setDriverPhone] = useState('');
 
   const filteredVehicles = vehicles.filter((v) => {
     const matchesSearch =
@@ -61,11 +66,16 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
       speedLimit,
       odometer: 0,
       deviceId: selectedDeviceId || undefined,
+      customerId: selectedCustomerId || undefined,
     });
 
     setIsAddModalOpen(false);
     setPlateNumber('');
     setVehicleName('');
+    setSelectedCustomerId('');
+    setSelectedDeviceId('');
+    setDriverName('');
+    setDriverPhone('');
   };
 
   const getTypeNameInPersian = (type: VehicleType) => {
@@ -315,6 +325,22 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
                   {devices.map((d) => (
                     <option key={d.id} value={d.id}>
                       {d.model} - IMEI: {d.imei} ({d.protocol})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs text-slate-700 font-medium mb-1">مالک / مشتری مربوطه</label>
+                <select
+                  value={selectedCustomerId}
+                  onChange={(e) => setSelectedCustomerId(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
+                >
+                  <option value="">ناوگان عمومی شرکت (بدون مشتری خاص)</option>
+                  {customers.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name || c.full_name} ({c.phone || c.username})
                     </option>
                   ))}
                 </select>

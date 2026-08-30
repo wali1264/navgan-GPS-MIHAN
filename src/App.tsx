@@ -27,7 +27,7 @@ import { StaffRegisterModal } from './components/auth/StaffRegisterModal';
 import { PendingApprovalScreen } from './components/auth/PendingApprovalScreen';
 import { AuthScreen } from './components/auth/AuthScreen';
 import { ChangePasswordModal } from './components/auth/ChangePasswordModal';
-import { UserRole, VehicleStatus, CommandType } from './shared/types/enums';
+import { UserRole, VehicleStatus, CommandType, EventType, EventSeverity, CommandStatus } from './shared/types/enums';
 import { Vehicle, Device, Customer, Driver, VehicleCurrentState, Geofence, FleetEvent, DeviceCommand, User, PositionRecord } from './shared/types/models';
 import { supabase, UserProfile } from './lib/supabase';
 import { globalAuthService } from './services/auth-service';
@@ -119,110 +119,151 @@ export function App() {
     };
   }, [refreshUserProfile]);
 
-  // Fetch datasets from API and Supabase
+  // Fetch datasets directly from Supabase Centralized Database
   const fetchAllData = useCallback(async () => {
     try {
-      const [vRes, dRes, cRes, drRes, sRes, gRes, eRes, cmdRes] = await Promise.all([
-        fetch('/api/vehicles'),
-        fetch('/api/devices'),
-        fetch('/api/customers'),
-        fetch('/api/drivers'),
-        fetch('/api/positions/current'),
-        fetch('/api/geofences'),
-        fetch('/api/events'),
-        fetch('/api/commands'),
+      const [vList, dList, cList, gList, eList] = await Promise.all([
+        globalSupabaseDataService.getVehicles(),
+        globalSupabaseDataService.getDevices(),
+        globalSupabaseDataService.getCustomers(),
+        globalSupabaseDataService.getGeofences(),
+        globalSupabaseDataService.getAlerts(),
       ]);
 
-      if (vRes.ok) setVehicles(await vRes.json());
-      if (dRes.ok) setDevices(await dRes.json());
-      if (cRes.ok) setCustomers(await cRes.json());
-      if (drRes.ok) setDrivers(await drRes.json());
-      if (sRes.ok) setCurrentStates(await sRes.json());
-      if (gRes.ok) setGeofences(await gRes.json());
-      if (eRes.ok) setEvents(await eRes.json());
-      if (cmdRes.ok) setCommands(await cmdRes.json());
+      setVehicles(vList);
+      setDevices(dList);
+      setCustomers(cList);
+      setGeofences(gList);
+      setEvents(eList);
+
+      const states = await globalSupabaseDataService.getCurrentStates(vList, dList);
+      if (states.length > 0) {
+        setCurrentStates(states);
+      }
     } catch (err) {
-      console.warn('[App] Fetch error:', err);
+      console.warn('[App] Supabase fetch error:', err);
     }
   }, []);
 
   useEffect(() => {
     fetchAllData();
-    const interval = setInterval(fetchAllData, 7000);
+    const interval = setInterval(fetchAllData, 8000);
     return () => clearInterval(interval);
   }, [fetchAllData]);
 
-  // WebSocket Live Telemetry Stream
+  // Supabase Realtime & Live GPS Stream Subscription
   useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/api/ws`;
-    let ws: WebSocket | null = null;
-    let reconnectTimeout: any = null;
+    // 1. Supabase Postgres Realtime for instant multi-device GPS telemetry synchronization
+    const channel = supabase
+      .channel('afg_gps_live_feed')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'gps_telemetry' },
+        (payload: any) => {
+          const t = payload.new;
+          if (!t) return;
 
-    function connectWs() {
-      try {
-        ws = new WebSocket(wsUrl);
+          setDevices((prevDevs) => {
+            const dev = prevDevs.find((d) => d.imei === t.device_imei);
+            if (dev) {
+              setVehicles((prevVehs) => {
+                const veh = prevVehs.find((v) => v.deviceId === dev.id);
+                if (veh) {
+                  setCurrentStates((prevStates) => {
+                    const newState: VehicleCurrentState = {
+                      vehicleId: veh.id,
+                      deviceId: dev.id,
+                      customerId: veh.customerId || '',
+                      organizationId: 'org-afg-01',
+                      latitude: t.lat,
+                      longitude: t.lng,
+                      altitude: t.altitude || 1790,
+                      speed: Math.round(t.speed || 0),
+                      heading: t.heading || 0,
+                      ignition: t.ignition || false,
+                      door: false,
+                      batteryVoltage: 12.6,
+                      batteryPercentage: t.battery_level || 95,
+                      gsmSignal: t.gsm_signal || 90,
+                      satellites: t.satellites || 12,
+                      gpsValid: true,
+                      onlineStatus: (t.speed || 0) > 2 ? VehicleStatus.MOVING : VehicleStatus.STOPPED,
+                      lastSeenAt: t.recorded_at,
+                      lastPositionAt: t.recorded_at,
+                      odometer: 0,
+                      address: `کابل (${t.lat.toFixed(4)}, ${t.lng.toFixed(4)})`,
+                    };
 
-        ws.onopen = () => {
-          console.log('[App WS] Connected to live GPS stream');
-        };
-
-        ws.onmessage = (evt) => {
-          try {
-            const data = JSON.parse(evt.data);
-            if (data.type === 'STATE_UPDATE' && data.state) {
-              const updatedState: VehicleCurrentState = data.state;
-              setCurrentStates((prev) => {
-                const idx = prev.findIndex((s) => s.vehicleId === updatedState.vehicleId);
-                if (idx >= 0) {
-                  const updated = [...prev];
-                  updated[idx] = updatedState;
-                  return updated;
+                    const idx = prevStates.findIndex((s) => s.vehicleId === veh.id);
+                    if (idx >= 0) {
+                      const updated = [...prevStates];
+                      updated[idx] = newState;
+                      return updated;
+                    }
+                    return [...prevStates, newState];
+                  });
                 }
-                return [...prev, updatedState];
+                return prevVehs;
               });
-
-              if (data.events && Array.isArray(data.events) && data.events.length > 0) {
-                setEvents((prev) => [...data.events, ...prev]);
-              }
             }
-          } catch (e) {
-            console.warn('[App WS] JSON parse error:', e);
+            return prevDevs;
+          });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'vehicles' },
+        () => {
+          fetchAllData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'devices' },
+        () => {
+          fetchAllData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'alerts' },
+        (payload: any) => {
+          const a = payload.new;
+          if (a) {
+            setEvents((prev) => [
+              {
+                id: a.id,
+                organizationId: 'org-afg-01',
+                vehicleId: a.vehicle_id || '',
+                deviceId: a.device_imei || '',
+                eventType: EventType.OVERSPEED,
+                severity: EventSeverity.WARNING,
+                title: a.title,
+                message: a.description || a.title,
+                timestamp: a.created_at,
+                latitude: a.lat || 34.5553,
+                longitude: a.lng || 69.2075,
+                speed: a.speed || 0,
+                isAcknowledged: a.is_read || false,
+              },
+              ...prev,
+            ]);
           }
-        };
-
-        ws.onclose = () => {
-          reconnectTimeout = setTimeout(connectWs, 3000);
-        };
-      } catch {
-        reconnectTimeout = setTimeout(connectWs, 3000);
-      }
-    }
-
-    connectWs();
+        }
+      )
+      .subscribe();
 
     return () => {
-      if (ws) ws.close();
-      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      supabase.removeChannel(channel);
     };
-  }, []);
+  }, [fetchAllData]);
 
   // Handlers
   const handleSwitchRole = async (role: UserRole) => {
-    try {
-      const res = await fetch('/api/auth/switch-role', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setCurrentUser(data.user);
-        fetchAllData();
-      }
-    } catch (err) {
-      console.warn(err);
-    }
+    setCurrentUser((prev) => ({
+      ...prev,
+      role,
+    }));
   };
 
   const handleLogout = async () => {
@@ -241,56 +282,66 @@ export function App() {
 
   const handleAddVehicle = async (vehData: Partial<Vehicle>) => {
     try {
-      const res = await fetch('/api/vehicles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(vehData),
+      const { vehicle, error } = await globalSupabaseDataService.createVehicle({
+        plateNumber: vehData.plateNumber || '',
+        vehicleName: vehData.vehicleName || '',
+        vehicleType: vehData.vehicleType,
+        deviceId: vehData.deviceId,
+        customerId: vehData.customerId,
+        speedLimit: vehData.speedLimit,
+        created_by: currentProfile?.id,
       });
-      if (res.ok) {
-        const newV = await res.json();
-        setVehicles((prev) => [...prev, newV]);
+
+      if (vehicle) {
+        setVehicles((prev) => [vehicle, ...prev]);
+        fetchAllData();
+      } else if (error) {
+        console.warn('[App] Create vehicle error:', error);
       }
     } catch (err) {
-      console.warn(err);
+      console.warn('[App] Create vehicle exception:', err);
     }
   };
 
   const handleAddDevice = async (deviceData: Partial<Device>) => {
     try {
-      const res = await fetch('/api/devices', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(deviceData),
+      const { device, error } = await globalSupabaseDataService.createDevice({
+        imei: deviceData.imei || '',
+        model_name: deviceData.model,
+        protocol: deviceData.protocol,
+        sim_number: deviceData.simNumber,
+        sim_operator: deviceData.simOperator,
+        created_by: currentProfile?.id,
       });
-      if (res.ok) {
-        const newD = await res.json();
-        setDevices((prev) => [...prev, newD]);
+
+      if (device) {
+        setDevices((prev) => [device, ...prev]);
+        fetchAllData();
+      } else if (error) {
+        console.warn('[App] Create device error:', error);
       }
     } catch (err) {
-      console.warn(err);
+      console.warn('[App] Create device exception:', err);
     }
   };
 
   const handleAddGeofence = async (gfData: Partial<Geofence>) => {
     try {
-      const res = await fetch('/api/geofences', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(gfData),
-      });
-      if (res.ok) {
-        const newG = await res.json();
-        setGeofences((prev) => [...prev, newG]);
+      const newGf = await globalSupabaseDataService.createGeofence(gfData, currentProfile?.id);
+      if (newGf) {
+        setGeofences((prev) => [newGf, ...prev]);
       }
     } catch (err) {
-      console.warn(err);
+      console.warn('[App] Create geofence error:', err);
     }
   };
 
   const handleDeleteGeofence = async (id: string) => {
     try {
-      await fetch(`/api/geofences/${id}`, { method: 'DELETE' });
-      setGeofences((prev) => prev.filter((g) => g.id !== id));
+      const ok = await globalSupabaseDataService.deleteGeofence(id);
+      if (ok) {
+        setGeofences((prev) => prev.filter((g) => g.id !== id));
+      }
     } catch (err) {
       console.warn(err);
     }
@@ -298,7 +349,7 @@ export function App() {
 
   const handleAcknowledgeEvent = async (eventId: string) => {
     try {
-      await fetch(`/api/events/${eventId}/ack`, { method: 'POST' });
+      await globalSupabaseDataService.acknowledgeAlert(eventId);
       setEvents((prev) =>
         prev.map((e) => (e.id === eventId ? { ...e, isAcknowledged: true } : e))
       );
@@ -313,15 +364,20 @@ export function App() {
     commandType: CommandType,
     parameters?: Record<string, unknown>
   ) => {
-    const res = await fetch('/api/commands', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deviceId, vehicleId, commandType, parameters }),
-    });
-    if (res.ok) {
-      const newCmd = await res.json();
-      setCommands((prev) => [newCmd, ...prev]);
-    }
+    // Local state command recording
+    const newCmd: DeviceCommand = {
+      id: `cmd-${Date.now()}`,
+      organizationId: 'org-afg-01',
+      deviceId,
+      vehicleId,
+      commandType,
+      parameters: parameters || {},
+      status: CommandStatus.SENT,
+      sentAt: new Date().toISOString(),
+      createdById: currentProfile?.id || 'usr-admin-01',
+      createdAt: new Date().toISOString(),
+    };
+    setCommands((prev) => [newCmd, ...prev]);
   };
 
   const handleLoadHistory = async (
@@ -329,13 +385,9 @@ export function App() {
     startTime: string,
     endTime: string
   ): Promise<PositionRecord[]> => {
-    const res = await fetch(
-      `/api/history/${vehicleId}?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}`
-    );
-    if (res.ok) {
-      return await res.json();
-    }
-    return [];
+    const targetVehicle = vehicles.find((v) => v.id === vehicleId);
+    if (!targetVehicle) return [];
+    return await globalSupabaseDataService.getRouteHistory(targetVehicle, devices, startTime, endTime);
   };
 
   const activeAlertsCount = events.filter((e) => !e.isAcknowledged).length;
@@ -654,6 +706,7 @@ export function App() {
               currentStates={currentStates}
               devices={devices}
               drivers={drivers}
+              customers={customers}
               onAddVehicle={handleAddVehicle}
               onSelectVehicle={(id) => {
                 setSelectedVehicleId(id);

@@ -153,7 +153,7 @@ export function App() {
 
   // Supabase Realtime & Live GPS Stream Subscription
   useEffect(() => {
-    // 1. Supabase Postgres Realtime for instant multi-device GPS telemetry synchronization
+      // 1. Supabase Postgres Realtime for instant multi-device GPS telemetry synchronization
     const channel = supabase
       .channel('afg_gps_live_feed')
       .on(
@@ -165,47 +165,47 @@ export function App() {
 
           setDevices((prevDevs) => {
             const dev = prevDevs.find((d) => d.imei === t.device_imei);
-            if (dev) {
-              setVehicles((prevVehs) => {
-                const veh = prevVehs.find((v) => v.deviceId === dev.id);
-                if (veh) {
-                  setCurrentStates((prevStates) => {
-                    const newState: VehicleCurrentState = {
-                      vehicleId: veh.id,
-                      deviceId: dev.id,
-                      customerId: veh.customerId || '',
-                      organizationId: 'org-afg-01',
-                      latitude: t.lat,
-                      longitude: t.lng,
-                      altitude: t.altitude || 1790,
-                      speed: Math.round(t.speed || 0),
-                      heading: t.heading || 0,
-                      ignition: t.ignition || false,
-                      door: false,
-                      batteryVoltage: 12.6,
-                      batteryPercentage: t.battery_level || 95,
-                      gsmSignal: t.gsm_signal || 90,
-                      satellites: t.satellites || 12,
-                      gpsValid: true,
-                      onlineStatus: (t.speed || 0) > 2 ? VehicleStatus.MOVING : VehicleStatus.STOPPED,
-                      lastSeenAt: t.recorded_at,
-                      lastPositionAt: t.recorded_at,
-                      odometer: 0,
-                      address: `کابل (${t.lat.toFixed(4)}, ${t.lng.toFixed(4)})`,
-                    };
+            
+            setVehicles((prevVehs) => {
+              // Match vehicle by device ID or directly if only 1 vehicle exists
+              const veh = prevVehs.find((v) => (dev && v.deviceId === dev.id) || prevVehs.length === 1);
+              if (veh) {
+                setCurrentStates((prevStates) => {
+                  const newState: VehicleCurrentState = {
+                    vehicleId: veh.id,
+                    deviceId: dev?.id || veh.deviceId || 'dev-001',
+                    customerId: veh.customerId || '',
+                    organizationId: 'org-afg-01',
+                    latitude: Number(t.lat),
+                    longitude: Number(t.lng),
+                    altitude: Number(t.altitude || 1790),
+                    speed: Math.round(Number(t.speed || 0)),
+                    heading: Math.round(Number(t.heading || 0)),
+                    ignition: Boolean(t.ignition),
+                    door: Boolean(t.door_status),
+                    batteryVoltage: Number(t.external_power_voltage || 13.8),
+                    batteryPercentage: Number(t.battery_level || 95),
+                    gsmSignal: Number(t.gsm_signal || 90),
+                    satellites: Number(t.satellites || 12),
+                    gpsValid: true,
+                    onlineStatus: (Number(t.speed) || 0) > 2 ? VehicleStatus.MOVING : VehicleStatus.STOPPED,
+                    lastSeenAt: t.recorded_at || t.created_at || new Date().toISOString(),
+                    lastPositionAt: t.recorded_at || t.created_at || new Date().toISOString(),
+                    odometer: 0,
+                    address: `کابل (${Number(t.lat).toFixed(4)}, ${Number(t.lng).toFixed(4)})`,
+                  };
 
-                    const idx = prevStates.findIndex((s) => s.vehicleId === veh.id);
-                    if (idx >= 0) {
-                      const updated = [...prevStates];
-                      updated[idx] = newState;
-                      return updated;
-                    }
-                    return [...prevStates, newState];
-                  });
-                }
-                return prevVehs;
-              });
-            }
+                  const idx = prevStates.findIndex((s) => s.vehicleId === veh.id);
+                  if (idx >= 0) {
+                    const updated = [...prevStates];
+                    updated[idx] = newState;
+                    return updated;
+                  }
+                  return [...prevStates, newState];
+                });
+              }
+              return prevVehs;
+            });
             return prevDevs;
           });
         }
@@ -487,6 +487,7 @@ export function App() {
           selectedVehicleId={selectedVehicleId}
           onChangePassword={() => setIsChangePasswordOpen(true)}
           onLogout={handleLogout}
+          onLoadHistory={handleLoadHistory}
         />
         {/* Toggle back button for admin / staff testing */}
         {currentProfile.role !== 'client' && (

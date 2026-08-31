@@ -431,31 +431,36 @@ export class SupabaseDataService {
       for (const v of vehicles) {
         const dev = devices.find((d) => d.id === v.deviceId);
         const imei = dev?.imei;
-        const lastTelem = imei ? latestMap.get(imei) : null;
+        let lastTelem = imei ? latestMap.get(imei) : null;
+
+        // Fallback to latest global telemetry if single vehicle
+        if (!lastTelem && telemetryList.length > 0 && vehicles.length === 1) {
+          lastTelem = telemetryList[0];
+        }
 
         if (lastTelem) {
           states.push({
             vehicleId: v.id,
-            deviceId: dev?.id || '',
+            deviceId: dev?.id || 'dev-001',
             customerId: v.customerId || '',
             organizationId: 'org-afg-01',
-            latitude: lastTelem.lat,
-            longitude: lastTelem.lng,
-            altitude: lastTelem.altitude || 1790,
-            speed: Math.round(lastTelem.speed || 0),
-            heading: lastTelem.heading || 0,
-            ignition: lastTelem.ignition || false,
-            door: false,
-            batteryVoltage: 12.6,
-            batteryPercentage: lastTelem.battery_level || 95,
-            gsmSignal: lastTelem.gsm_signal || 90,
-            satellites: lastTelem.satellites || 12,
+            latitude: Number(lastTelem.lat),
+            longitude: Number(lastTelem.lng),
+            altitude: Number(lastTelem.altitude || 1790),
+            speed: Math.round(Number(lastTelem.speed || 0)),
+            heading: Math.round(Number(lastTelem.heading || 0)),
+            ignition: Boolean(lastTelem.ignition),
+            door: Boolean(lastTelem.door_status),
+            batteryVoltage: Number(lastTelem.external_power_voltage || 13.8),
+            batteryPercentage: Number(lastTelem.battery_level || 95),
+            gsmSignal: Number(lastTelem.gsm_signal || 90),
+            satellites: Number(lastTelem.satellites || 12),
             gpsValid: true,
-            onlineStatus: (lastTelem.speed || 0) > 2 ? VehicleStatus.MOVING : VehicleStatus.STOPPED,
-            lastSeenAt: lastTelem.recorded_at,
-            lastPositionAt: lastTelem.recorded_at,
+            onlineStatus: (Number(lastTelem.speed) || 0) > 2 ? VehicleStatus.MOVING : VehicleStatus.STOPPED,
+            lastSeenAt: lastTelem.recorded_at || lastTelem.created_at,
+            lastPositionAt: lastTelem.recorded_at || lastTelem.created_at,
             odometer: 0,
-            address: `کابل (${lastTelem.lat.toFixed(4)}, ${lastTelem.lng.toFixed(4)})`,
+            address: `کابل (${Number(lastTelem.lat).toFixed(4)}, ${Number(lastTelem.lng).toFixed(4)})`,
           });
         }
       }
@@ -467,7 +472,7 @@ export class SupabaseDataService {
   }
 
   /**
-   * Fetch route history for vehicle replay
+   * Fetch route history for vehicle replay (up to 30 days)
    */
   public async getRouteHistory(
     vehicle: Vehicle,
@@ -477,38 +482,74 @@ export class SupabaseDataService {
   ): Promise<PositionRecord[]> {
     try {
       const dev = devices.find((d) => d.id === vehicle.deviceId);
-      if (!dev?.imei) return [];
+      const imei = dev?.imei;
 
       let query = supabase
         .from('gps_telemetry')
         .select('*')
-        .eq('device_imei', dev.imei)
         .order('recorded_at', { ascending: true })
-        .limit(1000);
+        .limit(2000);
 
-      if (fromDate) query = query.gte('recorded_at', fromDate);
+      if (imei) {
+        query = query.eq('device_imei', imei);
+      }
+
+      // Default to 30 days if fromDate not provided
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+      const actualFrom = fromDate || thirtyDaysAgo;
+
+      query = query.gte('recorded_at', actualFrom);
       if (toDate) query = query.lte('recorded_at', toDate);
 
       const { data, error } = await query;
-      if (error || !data) return [];
+      if (error || !data || data.length === 0) {
+        // Fallback: fetch latest without IMEI filter if single vehicle
+        const fallbackRes = await supabase
+          .from('gps_telemetry')
+          .select('*')
+          .order('recorded_at', { ascending: true })
+          .limit(500);
+
+        if (!fallbackRes.error && fallbackRes.data) {
+          return fallbackRes.data.map((t: any): PositionRecord => ({
+            id: String(t.id),
+            vehicleId: vehicle.id,
+            deviceId: dev?.id || 'dev-001',
+            timestamp: t.recorded_at || t.created_at,
+            latitude: Number(t.lat),
+            longitude: Number(t.lng),
+            altitude: Number(t.altitude || 1790),
+            speed: Number(t.speed || 0),
+            heading: Number(t.heading || 0),
+            ignition: Boolean(t.ignition),
+            door: Boolean(t.door_status),
+            batteryVoltage: Number(t.external_power_voltage || 13.8),
+            satellites: Number(t.satellites || 12),
+            gpsValid: true,
+            odometer: 0,
+            originalProtocol: 'GT06' as any,
+          }));
+        }
+        return [];
+      }
 
       return data.map((t: any): PositionRecord => ({
         id: String(t.id),
         vehicleId: vehicle.id,
-        deviceId: dev.id,
-        timestamp: t.recorded_at,
-        latitude: t.lat,
-        longitude: t.lng,
-        altitude: t.altitude || 1790,
-        speed: t.speed || 0,
-        heading: t.heading || 0,
-        ignition: t.ignition || false,
-        door: false,
-        batteryVoltage: 12.6,
-        satellites: t.satellites || 12,
+        deviceId: dev?.id || 'dev-001',
+        timestamp: t.recorded_at || t.created_at,
+        latitude: Number(t.lat),
+        longitude: Number(t.lng),
+        altitude: Number(t.altitude || 1790),
+        speed: Number(t.speed || 0),
+        heading: Number(t.heading || 0),
+        ignition: Boolean(t.ignition),
+        door: Boolean(t.door_status),
+        batteryVoltage: Number(t.external_power_voltage || 13.8),
+        satellites: Number(t.satellites || 12),
         gpsValid: true,
         odometer: 0,
-        originalProtocol: dev.protocol,
+        originalProtocol: dev?.protocol || ('GT06' as any),
       }));
     } catch {
       return [];

@@ -3,10 +3,11 @@
  * Designed specifically for smartphone screens with touch gestures, quick vehicle status, and live map view.
  */
 import React, { useState } from 'react';
-import { Vehicle, VehicleCurrentState, FleetEvent, User } from '../../shared/types/models';
+import { Vehicle, VehicleCurrentState, FleetEvent, User, PositionRecord } from '../../shared/types/models';
 import { MobileNav, MobileTab } from '../common/MobileNav';
 import { FleetMap } from '../map/FleetMap';
-import { Car, Navigation, Shield, Key, Battery, Signal, Bell, Phone, MapPin, Gauge, ChevronLeft, PowerOff, CheckCircle, KeyRound, LogOut } from 'lucide-react';
+import { TripHistoryView } from '../history/TripHistoryView';
+import { Car, Navigation, Shield, Key, Battery, Signal, Bell, Phone, MapPin, Gauge, ChevronLeft, PowerOff, CheckCircle, KeyRound, LogOut, History } from 'lucide-react';
 import { VehicleStatus } from '../../shared/types/enums';
 
 interface CustomerMobileViewProps {
@@ -18,6 +19,7 @@ interface CustomerMobileViewProps {
   selectedVehicleId?: string;
   onChangePassword?: () => void;
   onLogout?: () => void;
+  onLoadHistory?: (vehicleId: string, startTime: string, endTime: string) => Promise<PositionRecord[]>;
 }
 
 export const CustomerMobileView: React.FC<CustomerMobileViewProps> = ({
@@ -29,6 +31,7 @@ export const CustomerMobileView: React.FC<CustomerMobileViewProps> = ({
   selectedVehicleId,
   onChangePassword,
   onLogout,
+  onLoadHistory,
 }) => {
   const [activeTab, setActiveTab] = useState<MobileTab>('home');
   const [activeVehicleModalId, setActiveVehicleModalId] = useState<string | null>(null);
@@ -57,6 +60,16 @@ export const CustomerMobileView: React.FC<CustomerMobileViewProps> = ({
           <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full font-bold">
             ● GPS زنده
           </span>
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              className="p-1.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-600 hover:bg-rose-100 flex items-center gap-1 text-[11px] font-bold"
+              title="خروج از حساب"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>خروج</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -125,12 +138,18 @@ export const CustomerMobileView: React.FC<CustomerMobileViewProps> = ({
                           <span className="text-xs font-bold text-slate-900">{v.plateNumber}</span>
                           <span className="text-[11px] text-slate-500">({v.vehicleName})</span>
                         </div>
-                        <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-2">
-                          <span>⚡ {state?.speed || 0} km/h</span>
+                        <div className="text-xs text-slate-500 mt-0.5 flex flex-wrap items-center gap-2">
+                          <span className="font-mono font-bold text-blue-600">⚡ {state?.speed || 0} km/h</span>
                           <span>•</span>
-                          <span className={state?.ignition ? 'text-emerald-700 font-medium' : 'text-slate-400'}>
-                            {state?.ignition ? 'سویچ روشن' : 'خاموش'}
+                          <span className={state?.ignition ? 'text-emerald-700 font-bold' : 'text-slate-400'}>
+                            {state?.ignition ? '🔑 روشن' : 'خاموش'}
                           </span>
+                          <span>•</span>
+                          <span className={state?.door ? 'text-rose-600 font-bold' : 'text-emerald-600'}>
+                            {state?.door ? '🚪 در باز' : '🔒 در بسته'}
+                          </span>
+                          <span>•</span>
+                          <span className="text-slate-600 font-mono">🔋 {state?.batteryVoltage || 13.8}V</span>
                         </div>
                       </div>
                     </div>
@@ -152,6 +171,19 @@ export const CustomerMobileView: React.FC<CustomerMobileViewProps> = ({
               selectedVehicleId={selectedVehicleId}
               onSelectVehicle={onSelectVehicle}
               className="h-full"
+            />
+          </div>
+        )}
+
+        {/* HISTORY TAB (Up to 30 Days Replay & Analysis) */}
+        {activeTab === 'history' && (
+          <div className="space-y-4">
+            <TripHistoryView
+              vehicles={activeVehicles}
+              onLoadHistory={
+                onLoadHistory ||
+                (async () => [])
+              }
             />
           </div>
         )}

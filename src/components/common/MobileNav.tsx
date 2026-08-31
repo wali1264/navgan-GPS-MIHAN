@@ -2,9 +2,9 @@
  * Customer Mobile Bottom Navigation Bar
  */
 import React from 'react';
-import { Home, MapPin, Car, Bell, User } from 'lucide-react';
+import { Home, MapPin, Car, Bell, User, History } from 'lucide-react';
 
-export type MobileTab = 'home' | 'map' | 'vehicles' | 'alerts' | 'account';
+export type MobileTab = 'home' | 'map' | 'history' | 'vehicles' | 'alerts' | 'account';
 
 interface MobileNavProps {
   activeTab: MobileTab;
@@ -22,6 +22,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
   const tabs = [
     { id: 'home', label: 'خانه', icon: Home },
     { id: 'map', label: 'نقشه زنده', icon: MapPin, badge: activeVehiclesCount },
+    { id: 'history', label: 'تاریخچه', icon: History },
     { id: 'vehicles', label: 'موترها', icon: Car },
     { id: 'alerts', label: 'هشدارها', icon: Bell, badge: alertsCount > 0 ? alertsCount : undefined },
     { id: 'account', label: 'حساب من', icon: User },

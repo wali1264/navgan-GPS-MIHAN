@@ -14,8 +14,16 @@ interface TripHistoryViewProps {
 
 export const TripHistoryView: React.FC<TripHistoryViewProps> = ({ vehicles, onLoadHistory }) => {
   const [selectedVehicleId, setSelectedVehicleId] = useState<string>(vehicles[0]?.id || '');
-  const [startDate, setStartDate] = useState<string>('2026-08-29T00:00');
-  const [endDate, setEndDate] = useState<string>('2026-08-30T23:59');
+  
+  // Dynamic 30-day range
+  const [startDate, setStartDate] = useState<string>(() => {
+    const d = new Date(Date.now() - 30 * 24 * 3600 * 1000);
+    return d.toISOString().slice(0, 16);
+  });
+  const [endDate, setEndDate] = useState<string>(() => {
+    const d = new Date(Date.now() + 24 * 3600 * 1000);
+    return d.toISOString().slice(0, 16);
+  });
   const [historyData, setHistoryData] = useState<PositionRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 

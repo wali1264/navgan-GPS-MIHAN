@@ -10,6 +10,7 @@ import { createServer as createViteServer } from 'vite';
 import { apiRouter } from './src/server/api-router';
 import { globalRealtimeServer } from './src/server/realtime-server';
 import { globalGpsGateway } from './src/gateway/gateway-service';
+import { globalSuperGateway } from './src/gateway/super-gateway';
 
 async function startServer() {
   const app = express();
@@ -22,14 +23,15 @@ async function startServer() {
   // API Routes
   app.use('/api', apiRouter);
 
-  // Start GPS Ingestion Gateway (TCP / UDP listeners on VPS)
+  // Start Universal GPS Super-Gateway Ingestion (TCP / UDP listeners on VPS)
   try {
     const tcpPort = parseInt(process.env.GPS_TCP_PORT || '5001', 10);
     const udpPort = parseInt(process.env.GPS_UDP_PORT || '5002', 10);
+    await globalSuperGateway.start(tcpPort, udpPort);
     await globalGpsGateway.start([tcpPort], [udpPort]);
-    console.log(`[GPS Gateway] Listeners initialized on TCP ${tcpPort}, UDP ${udpPort}`);
+    console.log(`[Super-Gateway] Listeners fully initialized on TCP ${tcpPort}, UDP ${udpPort}`);
   } catch (err) {
-    console.warn('[GPS Gateway] Sandbox port binding notice (Gateway active in memory/direct mode):', err);
+    console.warn('[Super-Gateway] Notice:', err);
   }
 
   // Vite middleware in development / static in production

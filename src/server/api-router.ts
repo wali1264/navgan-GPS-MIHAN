@@ -5,6 +5,7 @@ import express, { Response } from 'express';
 import { authMiddleware, AuthenticatedRequest, requireRole } from './auth-middleware';
 import { globalStorageRepository } from '../services/storage-repository';
 import { globalGpsGateway } from '../gateway/gateway-service';
+import { globalSuperGateway } from '../gateway/super-gateway';
 import { globalSessionManager } from '../gateway/session-manager';
 import { globalProtocolRegistry } from '../protocols/registry';
 import { globalCommandService } from '../services/command-service';
@@ -260,10 +261,46 @@ apiRouter.post('/commands', async (req: AuthenticatedRequest, res: Response) => 
   }
 });
 
-// --- 11. Diagnostics & Gateway Inspection ---
+// --- 11. Diagnostics & Super-Gateway Inspection ---
 apiRouter.get('/diagnostics/metrics', (_req, res) => {
   const metrics = globalGpsGateway.getMetrics();
   res.json(metrics);
+});
+
+apiRouter.get('/gateway/status', (_req, res) => {
+  const status = globalSuperGateway.getStatus();
+  res.json(status);
+});
+
+// Universal Direct Telemetry Ingest (for HTTP/HTTPS fallback)
+apiRouter.post('/v1/telemetry/ingest', async (req, res) => {
+  try {
+    const payload = req.body;
+    let rawBuffer: Buffer | string;
+
+    if (typeof payload === 'string') {
+      rawBuffer = payload;
+    } else if (Buffer.isBuffer(payload)) {
+      rawBuffer = payload;
+    } else {
+      rawBuffer = JSON.stringify(payload);
+    }
+
+    const result = await globalSuperGateway.handleIncomingBuffer(
+      rawBuffer,
+      undefined,
+      req.ip || 'http-client'
+    );
+
+    res.json({
+      success: result.success,
+      protocol: result.protocol,
+      decoded: result.isLocation,
+      record: result.record,
+    });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
 });
 
 apiRouter.get('/diagnostics/sessions', (_req, res) => {

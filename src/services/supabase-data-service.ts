@@ -409,19 +409,19 @@ export class SupabaseDataService {
    */
   public async getCurrentStates(vehicles: Vehicle[], devices: Device[]): Promise<VehicleCurrentState[]> {
     try {
-      // Fetch latest telemetry record for each device IMEI
+      // Fetch latest telemetry records
       const { data: telemetryList, error } = await supabase
         .from('gps_telemetry')
         .select('*')
-        .order('recorded_at', { ascending: false })
+        .order('id', { ascending: false })
         .limit(500);
 
-      if (error || !telemetryList) return [];
+      if (error || !telemetryList || telemetryList.length === 0) return [];
 
       // Group latest telemetry by device_imei
       const latestMap = new Map<string, any>();
       for (const t of telemetryList) {
-        if (!latestMap.has(t.device_imei)) {
+        if (t.device_imei && !latestMap.has(t.device_imei)) {
           latestMap.set(t.device_imei, t);
         }
       }
@@ -433,34 +433,39 @@ export class SupabaseDataService {
         const imei = dev?.imei;
         let lastTelem = imei ? latestMap.get(imei) : null;
 
-        // Fallback to latest global telemetry if single vehicle
-        if (!lastTelem && telemetryList.length > 0 && vehicles.length === 1) {
+        // Fallback to latest global telemetry record
+        if (!lastTelem && telemetryList.length > 0) {
           lastTelem = telemetryList[0];
         }
 
         if (lastTelem) {
+          const lat = Number(lastTelem.lat ?? lastTelem.latitude);
+          const lng = Number(lastTelem.lng ?? lastTelem.longitude);
+          const speed = Math.round(Number(lastTelem.speed || 0));
+          const ignition = Boolean(lastTelem.ignition ?? lastTelem.acc_status ?? (speed > 0));
+
           states.push({
             vehicleId: v.id,
             deviceId: dev?.id || 'dev-001',
             customerId: v.customerId || '',
             organizationId: 'org-afg-01',
-            latitude: Number(lastTelem.lat),
-            longitude: Number(lastTelem.lng),
+            latitude: lat,
+            longitude: lng,
             altitude: Number(lastTelem.altitude || 1790),
-            speed: Math.round(Number(lastTelem.speed || 0)),
-            heading: Math.round(Number(lastTelem.heading || 0)),
-            ignition: Boolean(lastTelem.ignition),
+            speed: speed,
+            heading: Math.round(Number(lastTelem.heading || lastTelem.course || 0)),
+            ignition: ignition,
             door: Boolean(lastTelem.door_status),
             batteryVoltage: Number(lastTelem.external_power_voltage || 13.8),
             batteryPercentage: Number(lastTelem.battery_level || 95),
             gsmSignal: Number(lastTelem.gsm_signal || 90),
             satellites: Number(lastTelem.satellites || 12),
             gpsValid: true,
-            onlineStatus: (Number(lastTelem.speed) || 0) > 2 ? VehicleStatus.MOVING : VehicleStatus.STOPPED,
-            lastSeenAt: lastTelem.recorded_at || lastTelem.created_at,
-            lastPositionAt: lastTelem.recorded_at || lastTelem.created_at,
+            onlineStatus: speed > 2 ? VehicleStatus.MOVING : (ignition ? VehicleStatus.IDLE : VehicleStatus.STOPPED),
+            lastSeenAt: lastTelem.recorded_at || lastTelem.created_at || new Date().toISOString(),
+            lastPositionAt: lastTelem.recorded_at || lastTelem.created_at || new Date().toISOString(),
             odometer: 0,
-            address: `کابل (${Number(lastTelem.lat).toFixed(4)}, ${Number(lastTelem.lng).toFixed(4)})`,
+            address: `کابل (${lat.toFixed(4)}, ${lng.toFixed(4)})`,
           });
         }
       }
@@ -487,63 +492,39 @@ export class SupabaseDataService {
       let query = supabase
         .from('gps_telemetry')
         .select('*')
-        .order('recorded_at', { ascending: true })
-        .limit(2000);
+        .order('id', { ascending: true })
+        .limit(3000);
 
       if (imei) {
         query = query.eq('device_imei', imei);
       }
 
-      // Default to 30 days if fromDate not provided
-      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
-      const actualFrom = fromDate || thirtyDaysAgo;
-
-      query = query.gte('recorded_at', actualFrom);
-      if (toDate) query = query.lte('recorded_at', toDate);
-
       const { data, error } = await query;
-      if (error || !data || data.length === 0) {
-        // Fallback: fetch latest without IMEI filter if single vehicle
+      let records = (!error && data && data.length > 0) ? data : [];
+
+      if (records.length === 0) {
         const fallbackRes = await supabase
           .from('gps_telemetry')
           .select('*')
-          .order('recorded_at', { ascending: true })
-          .limit(500);
+          .order('id', { ascending: true })
+          .limit(1000);
 
         if (!fallbackRes.error && fallbackRes.data) {
-          return fallbackRes.data.map((t: any): PositionRecord => ({
-            id: String(t.id),
-            vehicleId: vehicle.id,
-            deviceId: dev?.id || 'dev-001',
-            timestamp: t.recorded_at || t.created_at,
-            latitude: Number(t.lat),
-            longitude: Number(t.lng),
-            altitude: Number(t.altitude || 1790),
-            speed: Number(t.speed || 0),
-            heading: Number(t.heading || 0),
-            ignition: Boolean(t.ignition),
-            door: Boolean(t.door_status),
-            batteryVoltage: Number(t.external_power_voltage || 13.8),
-            satellites: Number(t.satellites || 12),
-            gpsValid: true,
-            odometer: 0,
-            originalProtocol: 'GT06' as any,
-          }));
+          records = fallbackRes.data;
         }
-        return [];
       }
 
-      return data.map((t: any): PositionRecord => ({
+      return records.map((t: any): PositionRecord => ({
         id: String(t.id),
         vehicleId: vehicle.id,
         deviceId: dev?.id || 'dev-001',
-        timestamp: t.recorded_at || t.created_at,
-        latitude: Number(t.lat),
-        longitude: Number(t.lng),
+        timestamp: t.recorded_at || t.created_at || new Date().toISOString(),
+        latitude: Number(t.lat ?? t.latitude),
+        longitude: Number(t.lng ?? t.longitude),
         altitude: Number(t.altitude || 1790),
         speed: Number(t.speed || 0),
-        heading: Number(t.heading || 0),
-        ignition: Boolean(t.ignition),
+        heading: Number(t.heading || t.course || 0),
+        ignition: Boolean(t.ignition ?? t.acc_status),
         door: Boolean(t.door_status),
         batteryVoltage: Number(t.external_power_voltage || 13.8),
         satellites: Number(t.satellites || 12),

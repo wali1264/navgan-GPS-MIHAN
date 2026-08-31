@@ -78,6 +78,31 @@ export const CustomerMobileView: React.FC<CustomerMobileViewProps> = ({
         {/* 1. HOME TAB */}
         {activeTab === 'home' && (
           <div className="space-y-4">
+            {/* Quick Action Navigation Grid for Customer */}
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <button
+                onClick={() => setActiveTab('map')}
+                className="p-3 bg-blue-600 text-white rounded-xl shadow-xs font-bold text-xs flex flex-col items-center justify-center gap-1.5 active:scale-95 transition hover:bg-blue-700"
+              >
+                <MapPin className="w-4 h-4" />
+                <span>نقشه زنده</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('history')}
+                className="p-3 bg-indigo-600 text-white rounded-xl shadow-xs font-bold text-xs flex flex-col items-center justify-center gap-1.5 active:scale-95 transition hover:bg-indigo-700"
+              >
+                <History className="w-4 h-4" />
+                <span>تاریخچه ۳۰ روز</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('vehicles')}
+                className="p-3 bg-slate-800 text-white rounded-xl shadow-xs font-bold text-xs flex flex-col items-center justify-center gap-1.5 active:scale-95 transition hover:bg-slate-900"
+              >
+                <Car className="w-4 h-4" />
+                <span>لیست موترها</span>
+              </button>
+            </div>
+
             {/* Quick Map Widget */}
             <div className="h-56 rounded-xl overflow-hidden border border-slate-100 shadow-xs relative bg-white">
               <FleetMap

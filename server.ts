@@ -28,8 +28,7 @@ async function startServer() {
     const tcpPort = parseInt(process.env.GPS_TCP_PORT || '5001', 10);
     const udpPort = parseInt(process.env.GPS_UDP_PORT || '5002', 10);
     await globalSuperGateway.start(tcpPort, udpPort);
-    await globalGpsGateway.start([tcpPort], [udpPort]);
-    console.log(`[Super-Gateway] Listeners fully initialized on TCP ${tcpPort}, UDP ${udpPort}`);
+    console.log(`[Super-Gateway] Listener fully initialized on TCP ${tcpPort}, UDP ${udpPort}`);
   } catch (err) {
     console.warn('[Super-Gateway] Notice:', err);
   }

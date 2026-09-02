@@ -628,6 +628,14 @@ export function App() {
                       const st = currentStates.find((s) => s.vehicleId === v.id);
                       const isSelected = selectedVehicleId === v.id;
 
+                      const isOffline = !st || st.onlineStatus === VehicleStatus.OFFLINE;
+                      const batteryDisplay =
+                        isOffline
+                          ? 'قطع'
+                          : st?.batteryVoltage !== undefined
+                          ? `${st.batteryVoltage}V`
+                          : 'بدون سنسور';
+
                       return (
                         <div
                           key={v.id}
@@ -662,7 +670,7 @@ export function App() {
                           </div>
                           <div className="text-[11px] text-slate-500 flex items-center justify-between">
                             <span>سرعت: <strong className="text-slate-800 font-mono">{st?.speed || 0}</strong> km/h</span>
-                            <span className="font-medium">{st?.ignition ? '🔑 روشن' : 'خاموش'}</span>
+                            <span className="font-mono text-slate-600">🔋 {batteryDisplay}</span>
                           </div>
                         </div>
                       );
@@ -753,6 +761,7 @@ export function App() {
             <TripHistoryView
               vehicles={vehicles}
               onLoadHistory={handleLoadHistory}
+              onBackToLive={() => setActiveTab('map')}
             />
           )}
 

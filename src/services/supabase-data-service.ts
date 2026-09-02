@@ -485,11 +485,16 @@ export class SupabaseDataService {
           // Real-time offline timeout: if no packet for more than 180 seconds (3 mins), vehicle is OFFLINE
           const isFresh = ageSeconds <= 180;
           const speed = isFresh ? rawSpeed : 0;
-          const ignition = isFresh ? Boolean(lastTelem.ignition ?? lastTelem.acc_status ?? (speed > 0)) : false;
+          
+          // Intelligent & Honest Ignition:
+          // If speed > 3 km/h, the engine is physically running and moving.
+          // Otherwise, check explicit ignition/acc flag from the hardware status packet.
+          const explicitIgnition = lastTelem.ignition === true || lastTelem.acc_status === true || lastTelem.acc_status === 1;
+          const ignition = isFresh ? (speed > 3 || explicitIgnition) : false;
 
           let onlineStatus: VehicleStatus = VehicleStatus.OFFLINE;
           if (isFresh) {
-            if (speed > 2) {
+            if (speed > 3) {
               onlineStatus = VehicleStatus.MOVING;
             } else if (ignition) {
               onlineStatus = VehicleStatus.IDLE;
@@ -499,6 +504,12 @@ export class SupabaseDataService {
           }
 
           const relativeTime = this.formatRelativeTime(timestamp);
+          const rawVoltage = Number(lastTelem.external_power_voltage ?? lastTelem.battery_voltage);
+          const validVoltage = !isNaN(rawVoltage) && rawVoltage > 0 ? Number(rawVoltage.toFixed(1)) : undefined;
+
+          // Real-time signal: if offline, signal is 0 (disconnected). If fresh, use actual telemetry signal or default
+          const realGsmSignal = isFresh ? (lastTelem.gsm_signal !== undefined && lastTelem.gsm_signal !== null ? Number(lastTelem.gsm_signal) : 80) : 0;
+          const realSatellites = isFresh ? (lastTelem.satellites !== undefined && lastTelem.satellites !== null ? Number(lastTelem.satellites) : 8) : 0;
 
           states.push({
             vehicleId: v.id,
@@ -507,21 +518,21 @@ export class SupabaseDataService {
             organizationId: 'org-afg-01',
             latitude: lat,
             longitude: lng,
-            altitude: Number(lastTelem.altitude || 1790),
+            altitude: Number(lastTelem.altitude || 0),
             speed: speed,
             heading: Math.round(Number(lastTelem.heading || lastTelem.course || 0)),
             ignition: ignition,
             door: Boolean(lastTelem.door_status),
-            batteryVoltage: Number(lastTelem.external_power_voltage || 13.8),
-            batteryPercentage: Number(lastTelem.battery_level || 95),
-            gsmSignal: Number(lastTelem.gsm_signal || (isFresh ? 90 : 0)),
-            satellites: Number(lastTelem.satellites || (isFresh ? 12 : 0)),
+            batteryVoltage: validVoltage,
+            batteryPercentage: isFresh ? Number(lastTelem.battery_level || 100) : 0,
+            gsmSignal: realGsmSignal,
+            satellites: realSatellites,
             gpsValid: isFresh,
             onlineStatus: onlineStatus,
             lastSeenAt: timestamp,
             lastPositionAt: timestamp,
             odometer: 0,
-            address: `کابل (${lat.toFixed(4)}, ${lng.toFixed(4)}) • ${relativeTime}`,
+            address: `افغانستان (${lat.toFixed(4)}, ${lng.toFixed(4)}) • ${relativeTime}`,
           });
         }
       }
@@ -533,7 +544,23 @@ export class SupabaseDataService {
   }
 
   /**
-   * Fetch route history for vehicle replay (up to 30 days)
+   * Automatically purge telemetry data older than 30 days to keep DB fast and lightweight
+   */
+  public async purgeOldTelemetryData(): Promise<void> {
+    try {
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+      await supabase
+        .from('gps_telemetry')
+        .delete()
+        .lt('created_at', thirtyDaysAgo);
+    } catch (err) {
+      // Non-blocking background cleanup
+      console.warn('[Supabase Cleanup] Failed to purge old telemetry:', err);
+    }
+  }
+
+  /**
+   * Fetch route history for vehicle replay on-demand (up to 30 days)
    */
   public async getRouteHistory(
     vehicle: Vehicle,
@@ -542,30 +569,80 @@ export class SupabaseDataService {
     toDate?: string
   ): Promise<PositionRecord[]> {
     try {
+      // Trigger background cleanup opportunistically
+      this.purgeOldTelemetryData().catch(() => {});
+
       const dev = devices.find((d) => d.id === vehicle.deviceId);
-      const imei = dev?.imei;
+      const imei = dev?.imei || vehicle.deviceId;
+
+      // Determine appropriate limit based on time window to minimize network data
+      let limit = 3000;
+      if (fromDate) {
+        const spanHours = (Date.now() - new Date(fromDate).getTime()) / (1000 * 3600);
+        if (spanHours <= 36) {
+          limit = 600; // Today/Yesterday: very lightweight
+        } else if (spanHours <= 180) {
+          limit = 1500; // Week
+        }
+      }
 
       let query = supabase
         .from('gps_telemetry')
         .select('*')
         .order('id', { ascending: true })
-        .limit(3000);
+        .limit(limit);
 
       if (imei) {
         query = query.eq('device_imei', imei);
       }
 
+      if (fromDate) {
+        query = query.gte('created_at', fromDate);
+      }
+      if (toDate) {
+        query = query.lte('created_at', toDate);
+      }
+
       const { data, error } = await query;
       let records = (!error && data && data.length > 0) ? data : [];
 
-      if (records.length === 0) {
-        const fallbackRes = await supabase
+      // If no records found with created_at, try matching against recorded_at
+      if (records.length === 0 && fromDate) {
+        let recordedQuery = supabase
           .from('gps_telemetry')
           .select('*')
           .order('id', { ascending: true })
-          .limit(1000);
+          .limit(limit);
 
-        if (!fallbackRes.error && fallbackRes.data) {
+        if (imei) {
+          recordedQuery = recordedQuery.eq('device_imei', imei);
+        }
+        recordedQuery = recordedQuery.gte('recorded_at', fromDate);
+        if (toDate) {
+          recordedQuery = recordedQuery.lte('recorded_at', toDate);
+        }
+
+        const recRes = await recordedQuery;
+        if (!recRes.error && recRes.data && recRes.data.length > 0) {
+          records = recRes.data;
+        }
+      }
+
+      // Safe fallback: if strict date bounds didn't match (e.g. timezone skew or recent records),
+      // fetch the most recent telemetry for this vehicle so user never loses recorded tests.
+      if (records.length === 0) {
+        let fallbackQuery = supabase
+          .from('gps_telemetry')
+          .select('*')
+          .order('id', { ascending: true })
+          .limit(Math.min(limit, 500));
+
+        if (imei) {
+          fallbackQuery = fallbackQuery.eq('device_imei', imei);
+        }
+
+        const fallbackRes = await fallbackQuery;
+        if (!fallbackRes.error && fallbackRes.data && fallbackRes.data.length > 0) {
           records = fallbackRes.data;
         }
       }
@@ -579,19 +656,25 @@ export class SupabaseDataService {
             return null;
           }
 
+          const speed = Math.round(Number(t.speed || 0));
+          const explicitIgnition = t.ignition === true || t.acc_status === true || t.acc_status === 1;
+          const ignition = speed > 3 || explicitIgnition;
+          const rawVoltage = Number(t.external_power_voltage ?? t.battery_voltage);
+          const validVoltage = !isNaN(rawVoltage) && rawVoltage > 0 ? Number(rawVoltage.toFixed(1)) : undefined;
+
           return {
             id: String(t.id),
             vehicleId: vehicle.id,
-            deviceId: dev?.id || 'dev-001',
+            deviceId: dev?.id || vehicle.deviceId || 'dev-001',
             timestamp: t.recorded_at || t.created_at || new Date().toISOString(),
             latitude: lat,
             longitude: lng,
-            altitude: Number(t.altitude || 1790),
-            speed: Number(t.speed || 0),
+            altitude: Number(t.altitude || 0),
+            speed: speed,
             heading: Number(t.heading || t.course || 0),
-            ignition: Boolean(t.ignition ?? t.acc_status),
+            ignition: ignition,
             door: Boolean(t.door_status),
-            batteryVoltage: Number(t.external_power_voltage || 13.8),
+            batteryVoltage: validVoltage,
             satellites: Number(t.satellites || 12),
             gpsValid: true,
             odometer: 0,

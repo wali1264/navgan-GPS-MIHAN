@@ -217,24 +217,33 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
                   </div>
 
                   {/* Telemetry Details */}
-                  <div className="grid grid-cols-2 gap-2 bg-slate-50/70 p-3 rounded-lg border border-slate-100 text-xs mb-3">
-                    <div className="flex items-center gap-2 text-slate-600">
-                      <Gauge className="w-3.5 h-3.5 text-blue-600" />
-                      <span>سرعت: <strong className="text-slate-900 font-mono">{state?.speed || 0}</strong> km/h</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-slate-600">
-                      <Key className="w-3.5 h-3.5 text-amber-600" />
-                      <span>سویچ: <strong className={state?.ignition ? 'text-emerald-600' : 'text-slate-500'}>{state?.ignition ? 'روشن' : 'خاموش'}</strong></span>
-                    </div>
-                    <div className="flex items-center gap-2 text-slate-600">
-                      <Battery className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>بطری: <strong className="text-slate-900 font-mono">{state?.batteryVoltage || 12.6}V</strong></span>
-                    </div>
-                    <div className="flex items-center gap-2 text-slate-600">
-                      <Signal className="w-3.5 h-3.5 text-indigo-600" />
-                      <span>سیگنال: <strong className="text-slate-900 font-mono">{state?.gsmSignal || 85}%</strong></span>
-                    </div>
-                  </div>
+                  {(() => {
+                    const isOffline = !state || state.onlineStatus === VehicleStatus.OFFLINE;
+                    const batteryDisplay =
+                      isOffline
+                        ? 'قطع ارتباط'
+                        : state?.batteryVoltage !== undefined
+                        ? `${state.batteryVoltage}V`
+                        : 'بدون سنسور';
+                    const signalDisplay = isOffline ? 'قطع' : `${state?.gsmSignal || 0}%`;
+
+                    return (
+                      <div className="grid grid-cols-2 gap-2 bg-slate-50/70 p-3 rounded-lg border border-slate-100 text-xs mb-3">
+                        <div className="flex items-center gap-2 text-slate-600">
+                          <Gauge className="w-3.5 h-3.5 text-blue-600" />
+                          <span>سرعت: <strong className="text-slate-900 font-mono">{state?.speed || 0}</strong> km/h</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-slate-600">
+                          <Signal className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>سیگنال: <strong className="text-slate-900 font-mono">{signalDisplay}</strong></span>
+                        </div>
+                        <div className="col-span-2 flex items-center gap-2 text-slate-600">
+                          <Battery className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>ولتاژ بطری: <strong className="text-slate-900 font-mono">{batteryDisplay}</strong></span>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Device & Driver Info */}
                   <div className="space-y-1.5 text-xs text-slate-500 border-t border-slate-100 pt-3">

@@ -1,29 +1,40 @@
 /**
  * Trip History & Route Playback View
- * Allows selecting vehicles, viewing historical paths, animating route playback, and analyzing stops.
+ * Streamlined for mobile: Receives selected vehicle and active filter directly,
+ * displays route history, performance metrics, and smooth animation playback.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Vehicle, PositionRecord } from '../../shared/types/models';
 import { FleetMap } from '../map/FleetMap';
-import { Play, Pause, RotateCcw, Calendar, Gauge, MapPin, Clock, Route } from 'lucide-react';
+import { calculateTotalRouteDistance } from '../../utils/geo-calculator';
+import {
+  Play,
+  Pause,
+  RotateCcw,
+  Gauge,
+  Clock,
+  Route,
+  Car,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react';
+
+export type TripHistoryFilter = 'today' | 'yesterday' | 'week' | 'month';
 
 interface TripHistoryViewProps {
   vehicles: Vehicle[];
+  selectedVehicleId?: string;
+  activeFilter?: TripHistoryFilter;
   onLoadHistory: (vehicleId: string, startTime: string, endTime: string) => Promise<PositionRecord[]>;
 }
 
-export const TripHistoryView: React.FC<TripHistoryViewProps> = ({ vehicles, onLoadHistory }) => {
-  const [selectedVehicleId, setSelectedVehicleId] = useState<string>(vehicles[0]?.id || '');
-  
-  // Dynamic 30-day range
-  const [startDate, setStartDate] = useState<string>(() => {
-    const d = new Date(Date.now() - 30 * 24 * 3600 * 1000);
-    return d.toISOString().slice(0, 16);
-  });
-  const [endDate, setEndDate] = useState<string>(() => {
-    const d = new Date(Date.now() + 24 * 3600 * 1000);
-    return d.toISOString().slice(0, 16);
-  });
+export const TripHistoryView: React.FC<TripHistoryViewProps> = ({
+  vehicles,
+  selectedVehicleId,
+  activeFilter = 'today',
+  onLoadHistory,
+}) => {
+  const [showStats, setShowStats] = useState(false);
   const [historyData, setHistoryData] = useState<PositionRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -32,55 +43,72 @@ export const TripHistoryView: React.FC<TripHistoryViewProps> = ({ vehicles, onLo
   const [playbackIndex, setPlaybackIndex] = useState(0);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
 
-  const fetchHistory = async () => {
-    if (!selectedVehicleId) return;
-    setIsLoading(true);
-    setIsPlaying(false);
-    try {
-      const data = await onLoadHistory(selectedVehicleId, new Date(startDate).toISOString(), new Date(endDate).toISOString());
-      
-      // If empty for that date range, generate realistic historical route trail for the selected vehicle in Kabul
-      if (data.length === 0) {
-        const fallback: PositionRecord[] = [];
-        const baseLat = 34.5368;
-        const baseLng = 69.1724;
-        for (let i = 0; i < 40; i++) {
-          const lat = baseLat + Math.sin(i * 0.15) * 0.04 + (i * 0.001);
-          const lng = baseLng + Math.cos(i * 0.15) * 0.05 + (i * 0.0012);
-          const speed = Math.round(30 + Math.sin(i * 0.2) * 25);
-          fallback.push({
-            id: `hist-${i}`,
-            vehicleId: selectedVehicleId,
-            deviceId: 'dev-001',
-            timestamp: new Date(Date.now() - (40 - i) * 60000).toISOString(),
-            latitude: parseFloat(lat.toFixed(6)),
-            longitude: parseFloat(lng.toFixed(6)),
-            speed,
-            heading: (i * 15) % 360,
-            ignition: speed > 0,
-            door: false,
-            batteryVoltage: 13.6,
-            gpsValid: true,
-            satellites: 13,
-            odometer: 42500 + (i * 0.4),
-            originalProtocol: 'GT06' as any,
-          });
-        }
-        setHistoryData(fallback);
-      } else {
-        setHistoryData(data);
-      }
-      setPlaybackIndex(0);
-    } catch (err) {
-      console.warn('Failed to load history:', err);
-    } finally {
-      setIsLoading(false);
+  // Compute ISO Start and End based on active filter
+  const getDateRange = () => {
+    const now = new Date();
+
+    if (activeFilter === 'today') {
+      // Covers from beginning of today or last 24h to now
+      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0).getTime();
+      const rolling24h = now.getTime() - 24 * 3600 * 1000;
+      const start = new Date(Math.min(startOfDay, rolling24h));
+      const end = new Date(now.getTime() + 12 * 3600 * 1000);
+      return { start: start.toISOString(), end: end.toISOString() };
     }
+
+    if (activeFilter === 'yesterday') {
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59, 999);
+      return { start: start.toISOString(), end: end.toISOString() };
+    }
+
+    if (activeFilter === 'week') {
+      const start = new Date(now.getTime() - 7 * 24 * 3600 * 1000);
+      const end = new Date(now.getTime() + 12 * 3600 * 1000);
+      return { start: start.toISOString(), end: end.toISOString() };
+    }
+
+    // Default 30 days / month
+    return {
+      start: new Date(now.getTime() - 30 * 24 * 3600 * 1000).toISOString(),
+      end: new Date(now.getTime() + 12 * 3600 * 1000).toISOString(),
+    };
   };
 
   useEffect(() => {
+    if (!selectedVehicleId) {
+      setHistoryData([]);
+      setIsLoading(false);
+      setIsPlaying(false);
+      setPlaybackIndex(0);
+      return;
+    }
+
+    let isMounted = true;
+    const fetchHistory = async () => {
+      setIsLoading(true);
+      setIsPlaying(false);
+      try {
+        const { start, end } = getDateRange();
+        const data = await onLoadHistory(selectedVehicleId, start, end);
+        if (isMounted) {
+          setHistoryData(data || []);
+          setPlaybackIndex(0);
+        }
+      } catch (err) {
+        console.warn('Failed to load history:', err);
+        if (isMounted) setHistoryData([]);
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    };
+
     fetchHistory();
-  }, [selectedVehicleId]);
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedVehicleId, activeFilter]);
 
   // Animation Loop for Playback
   useEffect(() => {
@@ -94,149 +122,121 @@ export const TripHistoryView: React.FC<TripHistoryViewProps> = ({ vehicles, onLo
         }
         return prev + 1;
       });
-    }, 500 / playbackSpeed);
+    }, 400 / playbackSpeed);
 
     return () => clearInterval(interval);
   }, [isPlaying, historyData, playbackSpeed]);
 
+  const selectedVehicle = vehicles.find((v) => v.id === selectedVehicleId);
   const currentPoint = historyData[playbackIndex];
   const maxSpeed = historyData.reduce((max, p) => Math.max(max, p.speed), 0);
-  const avgSpeed = historyData.length > 0 ? Math.round(historyData.reduce((sum, p) => sum + p.speed, 0) / historyData.length) : 0;
-  const totalDistance = (historyData.length * 0.35).toFixed(1);
+  const avgSpeed =
+    historyData.length > 0
+      ? Math.round(historyData.reduce((sum, p) => sum + p.speed, 0) / historyData.length)
+      : 0;
+  const totalDistance = useMemo(() => {
+    return calculateTotalRouteDistance(historyData);
+  }, [historyData]);
+
+  // If no vehicle is selected yet: Render clean full map without extra banner
+  if (!selectedVehicleId) {
+    return (
+      <div className="h-[460px] sm:h-[540px] rounded-xl overflow-hidden border border-slate-200 shadow-xs bg-white relative">
+        <FleetMap
+          vehicles={vehicles}
+          currentStates={[]}
+          routeHistory={[]}
+          className="w-full h-full"
+        />
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-5">
-      {/* Selector & Range Controls */}
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 bg-white p-5 rounded-xl border border-slate-100 shadow-xs">
-        <div>
-          <label className="block text-xs font-semibold text-slate-700 mb-1">انتخاب واسطه نقلیه</label>
-          <select
-            value={selectedVehicleId}
-            onChange={(e) => setSelectedVehicleId(e.target.value)}
-            className="w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
-          >
-            {vehicles.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.plateNumber} - {v.vehicleName}
-              </option>
-            ))}
-          </select>
-        </div>
+    <div className="space-y-2.5 flex flex-col">
+      {/* Metrics Summary Strip (Only visible when a vehicle is selected) */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+        <button
+          onClick={() => setShowStats(!showStats)}
+          className="w-full p-2.5 text-xs font-bold text-slate-700 flex items-center justify-between hover:bg-slate-50 transition cursor-pointer"
+        >
+          <div className="flex items-center gap-2 flex-wrap">
+            <Route className="w-3.5 h-3.5 text-blue-600" />
+            <span>مسافت طی‌شده: <strong className="text-blue-700 font-mono">{totalDistance} km</strong></span>
+            <span className="text-slate-300">•</span>
+            <span>سرعت اوسط: <strong className="text-emerald-700 font-mono">{avgSpeed} km/h</strong></span>
+            {selectedVehicle && (
+              <>
+                <span className="text-slate-300">•</span>
+                <span className="text-slate-500 font-mono">{selectedVehicle.plateNumber}</span>
+              </>
+            )}
+          </div>
+          {showStats ? (
+            <ChevronUp className="w-4 h-4 text-slate-400" />
+          ) : (
+            <ChevronDown className="w-4 h-4 text-slate-400" />
+          )}
+        </button>
 
-        <div>
-          <label className="block text-xs font-semibold text-slate-700 mb-1">از تاریخ و زمان</label>
-          <input
-            type="datetime-local"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            className="w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
-          />
-        </div>
-
-        <div>
-          <label className="block text-xs font-semibold text-slate-700 mb-1">الی تاریخ و زمان</label>
-          <input
-            type="datetime-local"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            className="w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
-          />
-        </div>
-
-        <div className="flex items-end">
-          <button
-            onClick={fetchHistory}
-            disabled={isLoading}
-            className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs rounded-md shadow-xs transition flex items-center justify-center gap-2"
-          >
-            <Route className="w-4 h-4" />
-            <span>{isLoading ? 'در حال بارگذاری...' : 'دریافت و نمایش مسیر'}</span>
-          </button>
-        </div>
+        {showStats && (
+          <div className="grid grid-cols-2 gap-2 p-2.5 bg-slate-50 border-t border-slate-100 text-xs">
+            <div className="flex items-center gap-2">
+              <Gauge className="w-3.5 h-3.5 text-rose-600" />
+              <span>حداکثر سرعت: <strong className="text-slate-900 font-mono">{maxSpeed} km/h</strong></span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Clock className="w-3.5 h-3.5 text-indigo-600" />
+              <span>نقاط ثبت‌شده: <strong className="text-slate-900 font-mono">{historyData.length}</strong></span>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Metrics Summary Strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 bg-white p-4 rounded-xl border border-slate-100 shadow-xs text-xs">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-lg bg-blue-50 text-blue-600 border border-blue-100">
-            <Route className="w-4 h-4" />
+      {/* Map Display with Route */}
+      <div className="h-[380px] sm:h-[480px] rounded-xl overflow-hidden border border-slate-200 shadow-xs bg-white relative">
+        {isLoading && (
+          <div className="absolute inset-0 bg-white/70 backdrop-blur-xs z-[500] flex items-center justify-center text-xs font-bold text-slate-700">
+            در حال بارگذاری تاریخچه مسیر...
           </div>
-          <div>
-            <div className="text-xs text-slate-500">مجموع مسافت طی شده</div>
-            <div className="text-sm font-bold text-slate-900 font-mono mt-0.5">{totalDistance} km</div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-100">
-            <Gauge className="w-4 h-4" />
-          </div>
-          <div>
-            <div className="text-xs text-slate-500">سرعت اوسط (Average)</div>
-            <div className="text-sm font-bold text-slate-900 font-mono mt-0.5">{avgSpeed} km/h</div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-lg bg-rose-50 text-rose-600 border border-rose-100">
-            <Gauge className="w-4 h-4" />
-          </div>
-          <div>
-            <div className="text-xs text-slate-500">حداکثر سرعت ثبت شده</div>
-            <div className="text-sm font-bold text-slate-900 font-mono mt-0.5">{maxSpeed} km/h</div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-100">
-            <Clock className="w-4 h-4" />
-          </div>
-          <div>
-            <div className="text-xs text-slate-500">تعداد نقاط ثبت شده</div>
-            <div className="text-sm font-bold text-slate-900 font-mono mt-0.5">{historyData.length} نقطه GPS</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Map with Route and Playback */}
-      <div className="h-[480px] rounded-xl overflow-hidden border border-slate-200/80 shadow-xs bg-white">
+        )}
         <FleetMap
           vehicles={vehicles}
           currentStates={[]}
           routeHistory={historyData}
-          historyPlaybackIndex={playbackIndex}
-          className="h-full"
+          historyPlaybackIndex={historyData.length > 0 ? playbackIndex : undefined}
+          className="w-full h-full"
         />
       </div>
 
-      {/* Playback Controls Bar */}
-      {historyData.length > 0 && (
-        <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-xs space-y-3">
+      {/* Playback Controls: Compact for Mobile */}
+      {historyData.length > 0 ? (
+        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs space-y-2.5">
           {/* Progress Slider */}
-          <div className="flex items-center gap-3">
-            <span className="text-xs font-mono text-slate-500">00:00</span>
+          <div className="flex items-center gap-2 text-xs font-mono">
+            <span className="text-slate-400 text-[11px]">نقطه ۱</span>
             <input
               type="range"
               min={0}
-              max={historyData.length - 1}
+              max={Math.max(0, historyData.length - 1)}
               value={playbackIndex}
               onChange={(e) => setPlaybackIndex(parseInt(e.target.value, 10))}
-              className="flex-1 accent-blue-600 h-2 bg-slate-100 rounded-lg cursor-pointer"
+              className="flex-1 accent-blue-600 h-1.5 bg-slate-100 rounded-lg cursor-pointer"
             />
-            <span className="text-xs font-mono text-blue-600 font-bold">
-              {playbackIndex + 1} / {historyData.length}
+            <span className="text-blue-600 font-bold text-[11px]">
+              {playbackIndex + 1}/{historyData.length}
             </span>
           </div>
 
-          {/* Controls and Telemetry at Current Point */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-100">
-            <div className="flex items-center gap-2">
+          {/* Buttons & Live Telemetry Point */}
+          <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
+            <div className="flex items-center gap-1.5">
               <button
                 onClick={() => setIsPlaying(!isPlaying)}
-                className="px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium flex items-center gap-1.5 transition shadow-xs"
+                className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1 transition shadow-xs cursor-pointer active:scale-95"
               >
-                {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                <span>{isPlaying ? 'توقف بازپخش' : 'پخش انیمیشن مسیر'}</span>
+                {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                <span>{isPlaying ? 'توقف' : 'پخش انیمیشن'}</span>
               </button>
 
               <button
@@ -244,32 +244,40 @@ export const TripHistoryView: React.FC<TripHistoryViewProps> = ({ vehicles, onLo
                   setIsPlaying(false);
                   setPlaybackIndex(0);
                 }}
-                className="p-2 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs transition shadow-xs"
-                title="شروع مجدد از ابتدا"
+                className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs transition shadow-xs cursor-pointer"
+                title="شروع مجدد"
               >
-                <RotateCcw className="w-4 h-4" />
+                <RotateCcw className="w-3.5 h-3.5" />
               </button>
 
               <select
                 value={playbackSpeed}
                 onChange={(e) => setPlaybackSpeed(parseFloat(e.target.value))}
-                className="bg-white border border-slate-200 rounded-md px-2.5 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-blue-500"
+                className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-700 font-medium focus:outline-none focus:border-blue-500 cursor-pointer"
               >
-                <option value={0.5}>سرعت 0.5x</option>
-                <option value={1}>سرعت 1x (عادی)</option>
-                <option value={2}>سرعت 2x (سریع)</option>
-                <option value={4}>سرعت 4x (خیلی سریع)</option>
+                <option value={1}>1x</option>
+                <option value={2}>2x</option>
+                <option value={4}>4x</option>
               </select>
             </div>
 
             {currentPoint && (
-              <div className="flex items-center gap-4 text-xs bg-slate-50 px-3.5 py-1.5 rounded-lg border border-slate-200/80">
-                <div>سرعت: <strong className="text-blue-600 font-mono">{currentPoint.speed}</strong> km/h</div>
-                <div>زمان: <strong className="text-slate-800 font-mono">{new Date(currentPoint.timestamp).toLocaleTimeString('fa-AF')}</strong></div>
-                <div>سویچ: <strong className={currentPoint.ignition ? 'text-emerald-700' : 'text-slate-400'}>{currentPoint.ignition ? 'روشن' : 'خاموش'}</strong></div>
+              <div className="text-[11px] bg-slate-50 px-2 py-1 rounded border border-slate-100 text-slate-700 flex items-center gap-2">
+                <span>⚡ <strong className="text-blue-600 font-mono">{currentPoint.speed}</strong> km/h</span>
+                <span className="text-slate-300">•</span>
+                <span className="font-mono text-slate-600">
+                  {new Date(currentPoint.timestamp).toLocaleTimeString('fa-AF', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                </span>
               </div>
             )}
           </div>
+        </div>
+      ) : (
+        <div className="bg-white p-4 rounded-xl border border-slate-200 text-center text-xs text-slate-500">
+          برای این بازه زمانی مسیری برای این موتر ثبت نشده است.
         </div>
       )}
     </div>

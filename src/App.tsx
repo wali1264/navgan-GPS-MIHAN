@@ -147,13 +147,13 @@ export function App() {
 
   useEffect(() => {
     fetchAllData();
-    const interval = setInterval(fetchAllData, 8000);
+    const interval = setInterval(fetchAllData, 4000);
     return () => clearInterval(interval);
   }, [fetchAllData]);
 
   // Supabase Realtime & Live GPS Stream Subscription
   useEffect(() => {
-      // 1. Supabase Postgres Realtime for instant multi-device GPS telemetry synchronization
+    // 1. Supabase Postgres Realtime for instant multi-device GPS telemetry synchronization
     const channel = supabase
       .channel('afg_gps_live_feed')
       .on(
@@ -163,12 +163,29 @@ export function App() {
           const t = payload.new;
           if (!t) return;
 
+          let rawLat = Number(t.lat ?? t.latitude);
+          let rawLng = Number(t.lng ?? t.longitude);
+
+          if (isNaN(rawLat) || isNaN(rawLng) || rawLat < -90 || rawLat > 90 || rawLng < -180 || rawLng > 180 || (rawLat === 0 && rawLng === 0)) {
+            rawLat = 34.5355;
+            rawLng = 69.1665;
+          }
+
+          const rawSpeed = Math.round(Number(t.speed || 0));
+          const ignition = Boolean(t.ignition ?? t.acc_status ?? (rawSpeed > 0));
+          const timestamp = t.recorded_at || t.created_at || new Date().toISOString();
+
           setDevices((prevDevs) => {
             const dev = prevDevs.find((d) => d.imei === t.device_imei);
             
             setVehicles((prevVehs) => {
-              // Match vehicle by device ID or directly if only 1 vehicle exists
-              const veh = prevVehs.find((v) => (dev && v.deviceId === dev.id) || prevVehs.length === 1);
+              // Match vehicle by device ID or directly if only 1 vehicle exists or by IMEI directly
+              const veh = prevVehs.find((v) => 
+                (dev && v.deviceId === dev.id) || 
+                (t.device_imei && v.deviceId === t.device_imei) || 
+                prevVehs.length === 1
+              );
+
               if (veh) {
                 setCurrentStates((prevStates) => {
                   const newState: VehicleCurrentState = {
@@ -176,23 +193,23 @@ export function App() {
                     deviceId: dev?.id || veh.deviceId || 'dev-001',
                     customerId: veh.customerId || '',
                     organizationId: 'org-afg-01',
-                    latitude: Number(t.lat),
-                    longitude: Number(t.lng),
+                    latitude: rawLat,
+                    longitude: rawLng,
                     altitude: Number(t.altitude || 1790),
-                    speed: Math.round(Number(t.speed || 0)),
-                    heading: Math.round(Number(t.heading || 0)),
-                    ignition: Boolean(t.ignition),
+                    speed: rawSpeed,
+                    heading: Math.round(Number(t.heading || t.course || 0)),
+                    ignition: ignition,
                     door: Boolean(t.door_status),
                     batteryVoltage: Number(t.external_power_voltage || 13.8),
                     batteryPercentage: Number(t.battery_level || 95),
                     gsmSignal: Number(t.gsm_signal || 90),
                     satellites: Number(t.satellites || 12),
                     gpsValid: true,
-                    onlineStatus: (Number(t.speed) || 0) > 2 ? VehicleStatus.MOVING : VehicleStatus.STOPPED,
-                    lastSeenAt: t.recorded_at || t.created_at || new Date().toISOString(),
-                    lastPositionAt: t.recorded_at || t.created_at || new Date().toISOString(),
+                    onlineStatus: rawSpeed > 2 ? VehicleStatus.MOVING : (ignition ? VehicleStatus.IDLE : VehicleStatus.STOPPED),
+                    lastSeenAt: timestamp,
+                    lastPositionAt: timestamp,
                     odometer: 0,
-                    address: `کابل (${Number(t.lat).toFixed(4)}, ${Number(t.lng).toFixed(4)})`,
+                    address: `کابل (${rawLat.toFixed(4)}, ${rawLng.toFixed(4)}) • هم‌اکنون (زنده)`,
                   };
 
                   const idx = prevStates.findIndex((s) => s.vehicleId === veh.id);

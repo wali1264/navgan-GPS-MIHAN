@@ -405,11 +405,34 @@ export class SupabaseDataService {
   }
 
   /**
+   * Helper to format relative Persian time string
+   */
+  public formatRelativeTime(dateString?: string): string {
+    if (!dateString) return 'نامشخص';
+    try {
+      const now = Date.now();
+      const time = new Date(dateString).getTime();
+      const diffSec = Math.floor((now - time) / 1000);
+
+      if (diffSec < 20) return 'هم‌اکنون (زنده)';
+      if (diffSec < 60) return `${diffSec} ثانیه پیش`;
+      const diffMin = Math.floor(diffSec / 60);
+      if (diffMin < 60) return `${diffMin} دقیقه قبل`;
+      const diffHours = Math.floor(diffMin / 60);
+      if (diffHours < 24) return `${diffHours} ساعت قبل`;
+      const diffDays = Math.floor(diffHours / 24);
+      return `${diffDays} روز قبل`;
+    } catch {
+      return dateString;
+    }
+  }
+
+  /**
    * Fetch Current Position States for all vehicles
    */
   public async getCurrentStates(vehicles: Vehicle[], devices: Device[]): Promise<VehicleCurrentState[]> {
     try {
-      // Fetch latest telemetry records
+      // Fetch latest telemetry records from central database
       const { data: telemetryList, error } = await supabase
         .from('gps_telemetry')
         .select('*')
@@ -427,22 +450,55 @@ export class SupabaseDataService {
       }
 
       const states: VehicleCurrentState[] = [];
+      const now = Date.now();
 
       for (const v of vehicles) {
         const dev = devices.find((d) => d.id === v.deviceId);
         const imei = dev?.imei;
         let lastTelem = imei ? latestMap.get(imei) : null;
 
-        // Fallback to latest global telemetry record
-        if (!lastTelem && telemetryList.length > 0) {
-          lastTelem = telemetryList[0];
+        // Fallback: match by IMEI directly or latest telemetry record
+        if (!lastTelem) {
+          // If vehicle has a deviceId matching an IMEI
+          if (v.deviceId && latestMap.has(v.deviceId)) {
+            lastTelem = latestMap.get(v.deviceId);
+          } else if (telemetryList.length > 0) {
+            lastTelem = telemetryList[0];
+          }
         }
 
         if (lastTelem) {
-          const lat = Number(lastTelem.lat ?? lastTelem.latitude);
-          const lng = Number(lastTelem.lng ?? lastTelem.longitude);
-          const speed = Math.round(Number(lastTelem.speed || 0));
-          const ignition = Boolean(lastTelem.ignition ?? lastTelem.acc_status ?? (speed > 0));
+          let lat = Number(lastTelem.lat ?? lastTelem.latitude);
+          let lng = Number(lastTelem.lng ?? lastTelem.longitude);
+
+          // Validate coordinates (fallback to Kabul center if completely invalid or missing)
+          if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180 || (lat === 0 && lng === 0)) {
+            lat = 34.5355;
+            lng = 69.1665;
+          }
+
+          const rawSpeed = Math.round(Number(lastTelem.speed || 0));
+          const timestamp = lastTelem.recorded_at || lastTelem.created_at || new Date().toISOString();
+          const recordTime = new Date(timestamp).getTime();
+          const ageSeconds = Math.max(0, Math.floor((now - recordTime) / 1000));
+
+          // Real-time offline timeout: if no packet for more than 180 seconds (3 mins), vehicle is OFFLINE
+          const isFresh = ageSeconds <= 180;
+          const speed = isFresh ? rawSpeed : 0;
+          const ignition = isFresh ? Boolean(lastTelem.ignition ?? lastTelem.acc_status ?? (speed > 0)) : false;
+
+          let onlineStatus: VehicleStatus = VehicleStatus.OFFLINE;
+          if (isFresh) {
+            if (speed > 2) {
+              onlineStatus = VehicleStatus.MOVING;
+            } else if (ignition) {
+              onlineStatus = VehicleStatus.IDLE;
+            } else {
+              onlineStatus = VehicleStatus.STOPPED;
+            }
+          }
+
+          const relativeTime = this.formatRelativeTime(timestamp);
 
           states.push({
             vehicleId: v.id,
@@ -458,14 +514,14 @@ export class SupabaseDataService {
             door: Boolean(lastTelem.door_status),
             batteryVoltage: Number(lastTelem.external_power_voltage || 13.8),
             batteryPercentage: Number(lastTelem.battery_level || 95),
-            gsmSignal: Number(lastTelem.gsm_signal || 90),
-            satellites: Number(lastTelem.satellites || 12),
-            gpsValid: true,
-            onlineStatus: speed > 2 ? VehicleStatus.MOVING : (ignition ? VehicleStatus.IDLE : VehicleStatus.STOPPED),
-            lastSeenAt: lastTelem.recorded_at || lastTelem.created_at || new Date().toISOString(),
-            lastPositionAt: lastTelem.recorded_at || lastTelem.created_at || new Date().toISOString(),
+            gsmSignal: Number(lastTelem.gsm_signal || (isFresh ? 90 : 0)),
+            satellites: Number(lastTelem.satellites || (isFresh ? 12 : 0)),
+            gpsValid: isFresh,
+            onlineStatus: onlineStatus,
+            lastSeenAt: timestamp,
+            lastPositionAt: timestamp,
             odometer: 0,
-            address: `کابل (${lat.toFixed(4)}, ${lng.toFixed(4)})`,
+            address: `کابل (${lat.toFixed(4)}, ${lng.toFixed(4)}) • ${relativeTime}`,
           });
         }
       }
@@ -514,24 +570,35 @@ export class SupabaseDataService {
         }
       }
 
-      return records.map((t: any): PositionRecord => ({
-        id: String(t.id),
-        vehicleId: vehicle.id,
-        deviceId: dev?.id || 'dev-001',
-        timestamp: t.recorded_at || t.created_at || new Date().toISOString(),
-        latitude: Number(t.lat ?? t.latitude),
-        longitude: Number(t.lng ?? t.longitude),
-        altitude: Number(t.altitude || 1790),
-        speed: Number(t.speed || 0),
-        heading: Number(t.heading || t.course || 0),
-        ignition: Boolean(t.ignition ?? t.acc_status),
-        door: Boolean(t.door_status),
-        batteryVoltage: Number(t.external_power_voltage || 13.8),
-        satellites: Number(t.satellites || 12),
-        gpsValid: true,
-        odometer: 0,
-        originalProtocol: dev?.protocol || ('GT06' as any),
-      }));
+      return records
+        .map((t: any): PositionRecord | null => {
+          let lat = Number(t.lat ?? t.latitude);
+          let lng = Number(t.lng ?? t.longitude);
+
+          if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+            return null;
+          }
+
+          return {
+            id: String(t.id),
+            vehicleId: vehicle.id,
+            deviceId: dev?.id || 'dev-001',
+            timestamp: t.recorded_at || t.created_at || new Date().toISOString(),
+            latitude: lat,
+            longitude: lng,
+            altitude: Number(t.altitude || 1790),
+            speed: Number(t.speed || 0),
+            heading: Number(t.heading || t.course || 0),
+            ignition: Boolean(t.ignition ?? t.acc_status),
+            door: Boolean(t.door_status),
+            batteryVoltage: Number(t.external_power_voltage || 13.8),
+            satellites: Number(t.satellites || 12),
+            gpsValid: true,
+            odometer: 0,
+            originalProtocol: dev?.protocol || ('GT06' as any),
+          };
+        })
+        .filter((r): r is PositionRecord => r !== null);
     } catch {
       return [];
     }

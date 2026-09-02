@@ -147,6 +147,7 @@ export const FleetMap: React.FC<FleetMapProps> = ({
       const isMoving = state.onlineStatus === VehicleStatus.MOVING;
       const isIdle = state.onlineStatus === VehicleStatus.IDLE;
       const isStopped = state.onlineStatus === VehicleStatus.STOPPED;
+      const isOffline = state.onlineStatus === VehicleStatus.OFFLINE;
 
       const bgBadgeColor = isMoving
         ? 'bg-emerald-600 text-white shadow-md'
@@ -154,10 +155,14 @@ export const FleetMap: React.FC<FleetMapProps> = ({
         ? 'bg-amber-500 text-white shadow-md'
         : isStopped
         ? 'bg-blue-600 text-white shadow-md'
-        : 'bg-slate-500 text-white';
+        : 'bg-slate-400 text-white shadow-sm';
 
       const isSelected = selectedVehicleId === state.vehicleId;
-      const ringClass = isSelected ? 'ring-4 ring-blue-500 ring-offset-2 ring-offset-white scale-115' : '';
+      const ringClass = isSelected
+        ? 'ring-4 ring-blue-500 ring-offset-2 ring-offset-white scale-110'
+        : isMoving
+        ? 'ring-2 ring-emerald-400/50 ring-offset-1 ring-offset-white'
+        : '';
 
       const customHtml = `
         <div class="relative flex flex-col items-center group cursor-pointer transition-transform">
@@ -196,7 +201,14 @@ export const FleetMap: React.FC<FleetMapProps> = ({
       }
 
       // Detailed Telemetry Popup
-      const statusText = isMoving ? 'در حال حرکت' : isIdle ? 'روشن و درجا' : isStopped ? 'پارک / متوقف' : 'آفلاین';
+      const statusText = isMoving
+        ? `در حال حرکت (${state.speed} km/h)`
+        : isIdle
+        ? 'روشن و درجا'
+        : isStopped
+        ? 'خاموش / متوقف'
+        : 'آفلاین (قطع ارتباط)';
+
       const statusBadge = isMoving
         ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
         : isIdle
@@ -214,12 +226,12 @@ export const FleetMap: React.FC<FleetMapProps> = ({
           <div class="text-xs font-semibold text-slate-700">${vehicle.vehicleName}</div>
           <div class="grid grid-cols-2 gap-1.5 text-xs text-slate-600 pt-1 bg-slate-50 p-2 rounded border border-slate-100">
             <div>⚡ سرعت: <strong class="text-slate-900 font-mono">${state.speed}</strong> km/h</div>
-            <div>🔑 سویچ: <strong class="${state.ignition ? 'text-emerald-700' : 'text-slate-500'}">${state.ignition ? 'روشن' : 'خاموش'}</strong></div>
-            <div>🔋 بطری: <strong class="text-slate-900 font-mono">${state.batteryVoltage || 12.6}V</strong></div>
-            <div>📡 آنتن: <strong class="text-slate-900 font-mono">${state.gsmSignal || 85}%</strong></div>
+            <div>🔑 سویچ: <strong class="${state.ignition ? 'text-emerald-700 font-bold' : 'text-slate-400'}">${state.ignition ? 'روشن' : 'خاموش'}</strong></div>
+            <div>🔋 بطری: <strong class="text-slate-900 font-mono">${state.batteryVoltage || 13.8}V</strong></div>
+            <div>📡 آنتن: <strong class="text-slate-900 font-mono">${state.gsmSignal || 0}%</strong></div>
           </div>
           <div class="text-[11px] text-slate-500 border-t border-slate-100 pt-1.5 flex items-center gap-1">
-            <span>📍 ${state.address || 'موقعیت GPS ثبت شده'}</span>
+            <span>📍 ${state.address || 'موقعیت GPS کابل'}</span>
           </div>
         </div>
       `;

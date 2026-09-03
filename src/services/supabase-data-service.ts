@@ -453,17 +453,32 @@ export class SupabaseDataService {
       const now = Date.now();
 
       for (const v of vehicles) {
-        const dev = devices.find((d) => d.id === v.deviceId);
-        const imei = dev?.imei;
+        const dev = devices.find((d) => d.id === v.deviceId || d.imei === v.deviceId);
+        let imei = dev?.imei;
         let lastTelem = imei ? latestMap.get(imei) : null;
 
-        // Fallback: match by IMEI directly or latest telemetry record
+        // Smart fallback: match vehicle plate or name with telemetry IMEI digits (e.g. 1001, 202, 3003, 4004, 5005)
         if (!lastTelem) {
-          // If vehicle has a deviceId matching an IMEI
           if (v.deviceId && latestMap.has(v.deviceId)) {
             lastTelem = latestMap.get(v.deviceId);
-          } else if (telemetryList.length > 0) {
-            lastTelem = telemetryList[0];
+          } else {
+            const combinedStr = `${v.plateNumber || ''} ${v.vehicleName || ''}`;
+            for (const [tImei, telem] of latestMap.entries()) {
+              const last3 = tImei.slice(-3);
+              const last4 = tImei.slice(-4);
+              if (
+                combinedStr.includes(last3) ||
+                combinedStr.includes(last4) ||
+                (combinedStr.includes('1001') && tImei.endsWith('001')) ||
+                (combinedStr.includes('202') && tImei.endsWith('002')) ||
+                (combinedStr.includes('3003') && tImei.endsWith('003')) ||
+                (combinedStr.includes('4004') && tImei.endsWith('004')) ||
+                (combinedStr.includes('5005') && tImei.endsWith('005'))
+              ) {
+                lastTelem = telem;
+                break;
+              }
+            }
           }
         }
 

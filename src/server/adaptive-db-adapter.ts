@@ -220,7 +220,7 @@ export class AdaptiveDbAdapter {
     try {
       const devices = globalStorageRepository.getDevices('org-afg-01');
       const matchedDevice = devices.find((d) => d.imei === record.device_imei);
-      const vehicleId = matchedDevice?.assignedVehicleId || 'veh-01';
+      const vehicleId = matchedDevice?.assignedVehicleId || `veh-${record.device_imei.slice(-4)}`;
 
       const state = {
         vehicleId: vehicleId,

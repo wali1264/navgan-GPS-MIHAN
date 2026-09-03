@@ -269,22 +269,118 @@ export class UniversalParser {
   // --- TK103 / Coban Parser ---
   private static parseTk103(text: string): ParseResult {
     try {
-      const cleaned = text.replace(/[()]/g, '');
+      const cleaned = text.replace(/[\r\n()]/g, '').trim();
       let imei = '868204050123456';
       let lat = 34.5350;
       let lng = 69.1650;
-      let speed = 40;
+      let speed = 0;
+      let heading = 0;
 
-      if (cleaned.length >= 15) {
-        imei = cleaned.substring(0, 15);
+      // 1. Check comma-delimited TK103 format
+      if (cleaned.includes(',')) {
+        const parts = cleaned.split(',');
+        for (const p of parts) {
+          if (p.startsWith('imei:')) {
+            imei = p.replace('imei:', '').trim();
+          } else if (/^\d{11,16}$/.test(p.trim())) {
+            imei = p.trim();
+          }
+        }
+
+        const nsIdx = parts.findIndex((p) => p.toUpperCase() === 'N' || p.toUpperCase() === 'S');
+        const ewIdx = parts.findIndex((p) => p.toUpperCase() === 'E' || p.toUpperCase() === 'W');
+
+        if (nsIdx > 0 && ewIdx > nsIdx) {
+          const rawLatStr = parts[nsIdx - 1];
+          const rawLngStr = parts[ewIdx - 1];
+          const ns = parts[nsIdx].toUpperCase();
+          const ew = parts[ewIdx].toUpperCase();
+
+          const latMatch = rawLatStr.match(/^(\d{2})(\d{2}(?:\.\d+)?)$/);
+          const lngMatch = rawLngStr.match(/^(\d{2,3})(\d{2}(?:\.\d+)?)$/);
+
+          if (latMatch && lngMatch) {
+            const latDeg = parseInt(latMatch[1], 10);
+            const latMin = parseFloat(latMatch[2]);
+            lat = latDeg + (latMin / 60);
+            if (ns === 'S') lat = -lat;
+
+            const lngDeg = parseInt(lngMatch[1], 10);
+            const lngMin = parseFloat(lngMatch[2]);
+            lng = lngDeg + (lngMin / 60);
+            if (ew === 'W') lng = -lng;
+          }
+
+          if (parts[ewIdx + 1]) {
+            const rawSpd = parseFloat(parts[ewIdx + 1]);
+            if (!isNaN(rawSpd)) {
+              speed = Math.round(rawSpd * 1.852); // standard knots to km/h
+            }
+          }
+          if (parts[ewIdx + 3]) {
+            const rawHead = parseFloat(parts[ewIdx + 3]);
+            if (!isNaN(rawHead)) heading = Math.round(rawHead) % 360;
+          }
+        }
+      } else {
+        // 2. Continuous non-delimited TK103 packet:
+        // Format: (IMEI)(CMD)(DATE)(A/V)(LAT_DD)(LAT_MM.MMMM)(N/S)(LNG_DDD)(LNG_MM.MMMM)(E/W)(SPEED)(TIME)(HEADING)...
+        // Example: 864920051111001BR00260902A3433.3180N06912.4500E075.0160548135.00000000L00000000
+        const imeiMatch = cleaned.match(/^(\d{11,16})/);
+        if (imeiMatch) {
+          imei = imeiMatch[1];
+        }
+
+        // Check if handshake / login packet (e.g. BP00, BP05, AP05, AP00)
+        const afterImei = cleaned.substring(imei.length);
+        const cmd = afterImei.substring(0, 4);
+        if (cmd === 'BP00' || cmd === 'BP05' || cmd === 'AP05' || cmd === 'AP00') {
+          return {
+            success: true,
+            protocol: 'TK103',
+            imei,
+            isLogin: true,
+            ackBuffer: Buffer.from(`(${imei}AP01HSO)\r\n`),
+          };
+        }
+
+        // Pattern matching: [AV] followed by lat (DDMM.MMMM)(N|S), lng (DDDMM.MMMM)(E|W), speed, time, heading
+        const telemMatch = cleaned.match(/([AV])(\d{2})(\d{2}\.\d+)([NS])(\d{3})(\d{2}\.\d+)([EW])(\d{3,5}(?:\.\d+)?)(\d{6})?(\d{3}(?:\.\d+)?)?/i);
+
+        if (telemMatch) {
+          const latDeg = parseInt(telemMatch[2], 10);
+          const latMin = parseFloat(telemMatch[3]);
+          lat = latDeg + (latMin / 60);
+          if (telemMatch[4].toUpperCase() === 'S') lat = -lat;
+
+          const lngDeg = parseInt(telemMatch[5], 10);
+          const lngMin = parseFloat(telemMatch[6]);
+          lng = lngDeg + (lngMin / 60);
+          if (telemMatch[7].toUpperCase() === 'W') lng = -lng;
+
+          const rawSpeed = parseFloat(telemMatch[8]);
+          if (!isNaN(rawSpeed)) {
+            // Convert knots to km/h
+            speed = Math.round(rawSpeed * 1.852);
+            if (speed > 250 && rawSpeed <= 200) {
+              speed = Math.round(rawSpeed);
+            }
+          }
+
+          if (telemMatch[10]) {
+            const rawHead = parseFloat(telemMatch[10]);
+            if (!isNaN(rawHead)) heading = Math.round(rawHead) % 360;
+          }
+        }
       }
 
       const record: NormalizedGpsRecord = {
         device_imei: imei,
-        lat,
-        lng,
-        speed,
-        ignition: true,
+        lat: Number(lat.toFixed(6)),
+        lng: Number(lng.toFixed(6)),
+        speed: Math.max(0, speed),
+        heading: Math.max(0, heading),
+        ignition: speed > 0,
         protocol: 'TK103',
         recorded_at: new Date().toISOString(),
       };

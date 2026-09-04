@@ -48,31 +48,30 @@ export const TripHistoryView: React.FC<TripHistoryViewProps> = ({
     const now = new Date();
 
     if (activeFilter === 'today') {
-      // Covers from beginning of today or last 24h to now
-      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0).getTime();
-      const rolling24h = now.getTime() - 24 * 3600 * 1000;
-      const start = new Date(Math.min(startOfDay, rolling24h));
-      const end = new Date(now.getTime() + 12 * 3600 * 1000);
+      // From 00:00:00.000 today to 23:59:59.999 today
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
       return { start: start.toISOString(), end: end.toISOString() };
     }
 
     if (activeFilter === 'yesterday') {
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 0, 0, 0);
+      // Strictly yesterday: from 00:00:00.000 to 23:59:59.999 yesterday
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 0, 0, 0, 0);
       const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59, 999);
       return { start: start.toISOString(), end: end.toISOString() };
     }
 
     if (activeFilter === 'week') {
-      const start = new Date(now.getTime() - 7 * 24 * 3600 * 1000);
-      const end = new Date(now.getTime() + 12 * 3600 * 1000);
+      // Last 7 days: 6 days ago 00:00:00.000 to end of today 23:59:59.999
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6, 0, 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
       return { start: start.toISOString(), end: end.toISOString() };
     }
 
-    // Default 30 days / month
-    return {
-      start: new Date(now.getTime() - 30 * 24 * 3600 * 1000).toISOString(),
-      end: new Date(now.getTime() + 12 * 3600 * 1000).toISOString(),
-    };
+    // Default 30 days: 29 days ago 00:00:00.000 to end of today 23:59:59.999
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29, 0, 0, 0, 0);
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    return { start: start.toISOString(), end: end.toISOString() };
   };
 
   useEffect(() => {
@@ -277,7 +276,7 @@ export const TripHistoryView: React.FC<TripHistoryViewProps> = ({
         </div>
       ) : (
         <div className="bg-white p-4 rounded-xl border border-slate-200 text-center text-xs text-slate-500">
-          برای این بازه زمانی مسیری برای این موتر ثبت نشده است.
+          برای این بازه زمانی ترددی برای این دستگاه ثبت نشده است.
         </div>
       )}
     </div>

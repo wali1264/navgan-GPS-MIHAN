@@ -8,18 +8,11 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Header } from './components/common/Header';
 import { Sidebar, NavTab } from './components/common/Sidebar';
 import { FleetMap } from './components/map/FleetMap';
-import { OverviewStats } from './components/dashboard/OverviewStats';
+import { CustomerMapFilter } from './components/map/CustomerMapFilter';
 import { VehiclesManager } from './components/vehicles/VehiclesManager';
 import { DevicesManager } from './components/devices/DevicesManager';
 import { TripHistoryView } from './components/history/TripHistoryView';
-import { GeofenceManager } from './components/geofences/GeofenceManager';
-import { EventsAlertsView } from './components/events/EventsAlertsView';
-import { DiagnosticsView } from './components/diagnostics/DiagnosticsView';
-import { CommandsView } from './components/commands/CommandsView';
-import { ReportsView } from './components/reports/ReportsView';
-import { MaintenanceView } from './components/maintenance/MaintenanceView';
 import { CustomersManager } from './components/customers/CustomersManager';
-import { DriversManager } from './components/drivers/DriversManager';
 import { StaffManager } from './components/staff/StaffManager';
 import { CustomerMobileView } from './components/mobile/CustomerMobileView';
 import { LoginModal } from './components/auth/LoginModal';
@@ -51,7 +44,7 @@ export function App() {
     status: 'ACTIVE',
   });
 
-  const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
+  const [activeTab, setActiveTab] = useState<NavTab>('map');
   const [isMobileView, setIsMobileView] = useState<boolean>(false);
 
   // Core Data Collections
@@ -64,6 +57,7 @@ export function App() {
   const [events, setEvents] = useState<FleetEvent[]>([]);
   const [commands, setCommands] = useState<DeviceCommand[]>([]);
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | undefined>(undefined);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | undefined>(undefined);
   const [statusFilter, setStatusFilter] = useState<VehicleStatus | undefined>(undefined);
 
   // Check Supabase Auth Session on Mount
@@ -323,6 +317,42 @@ export function App() {
     }
   };
 
+  const handleUpdateVehicle = async (id: string, vehData: Partial<Vehicle>) => {
+    try {
+      const { vehicle, error } = await globalSupabaseDataService.updateVehicle(id, {
+        plateNumber: vehData.plateNumber,
+        vehicleName: vehData.vehicleName,
+        deviceId: vehData.deviceId,
+        customerId: vehData.customerId,
+      });
+
+      if (vehicle) {
+        setVehicles((prev) => prev.map((v) => (v.id === id ? vehicle : v)));
+        fetchAllData();
+        return { success: true };
+      } else {
+        return { success: false, error: error || 'خطا در ویرایش سوژه' };
+      }
+    } catch (err: any) {
+      return { success: false, error: err.message || 'خطا در ویرایش سوژه' };
+    }
+  };
+
+  const handleDeleteVehicle = async (id: string) => {
+    try {
+      const res = await globalSupabaseDataService.deleteVehicle(id);
+      if (res.success) {
+        setVehicles((prev) => prev.filter((v) => v.id !== id));
+        fetchAllData();
+        return { success: true };
+      } else {
+        return { success: false, error: res.error || 'خطا در حذف سوژه' };
+      }
+    } catch (err: any) {
+      return { success: false, error: err.message || 'خطا در حذف سوژه' };
+    }
+  };
+
   const handleAddDevice = async (deviceData: Partial<Device>) => {
     try {
       const { device, error } = await globalSupabaseDataService.createDevice({
@@ -348,25 +378,120 @@ export function App() {
     }
   };
 
-  const handleAddGeofence = async (gfData: Partial<Geofence>) => {
+  const handleUpdateDevice = async (id: string, updates: any) => {
     try {
-      const newGf = await globalSupabaseDataService.createGeofence(gfData, currentProfile?.id);
-      if (newGf) {
-        setGeofences((prev) => [newGf, ...prev]);
+      const { device, error } = await globalSupabaseDataService.updateDevice(id, updates);
+      if (device) {
+        setDevices((prev) => prev.map((d) => (d.id === id ? device : d)));
+        fetchAllData();
+        return { success: true };
       }
-    } catch (err) {
-      console.warn('[App] Create geofence error:', err);
+      return { success: false, error: error || 'خطا در ویرایش دستگاه' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'خطا در ویرایش دستگاه' };
     }
   };
 
-  const handleDeleteGeofence = async (id: string) => {
+  const handleDeleteDevice = async (id: string) => {
+    try {
+      const res = await globalSupabaseDataService.deleteDevice(id);
+      if (res.success) {
+        setDevices((prev) => prev.filter((d) => d.id !== id));
+        fetchAllData();
+        return { success: true };
+      }
+      return { success: false, error: res.error || 'خطا در حذف دستگاه' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'خطا در حذف دستگاه' };
+    }
+  };
+
+  const handleUpdateClientProfile = async (
+    id: string,
+    updates: { fullName?: string; phone?: string; notes?: string }
+  ) => {
+    try {
+      const res = await globalAuthService.updateClientProfile(id, updates);
+      if (res.success) {
+        fetchAllData();
+        return { success: true };
+      }
+      return { success: false, error: res.error || 'خطا در ویرایش اطلاعات مشتری' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'خطا در ویرایش اطلاعات مشتری' };
+    }
+  };
+
+  const handleDeleteClientProfile = async (id: string) => {
+    try {
+      const res = await globalAuthService.deleteClientProfile(id);
+      if (res.success) {
+        setCustomers((prev) => prev.filter((c) => c.id !== id));
+        fetchAllData();
+        return { success: true };
+      }
+      return { success: false, error: res.error || 'خطا در حذف مشتری' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'خطا در حذف مشتری' };
+    }
+  };
+
+  const handleSaveGeofence = async (
+    gfData: Partial<Geofence>,
+    isEdit = false,
+    existingId?: string
+  ): Promise<boolean> => {
+    try {
+      if (isEdit && existingId) {
+        const updated = await globalSupabaseDataService.updateGeofence(existingId, gfData);
+        if (updated) {
+          setGeofences((prev) => prev.map((g) => (g.id === existingId ? updated : g)));
+          return true;
+        }
+        return false;
+      } else {
+        const newGf = await globalSupabaseDataService.createGeofence(gfData, currentProfile?.id);
+        if (newGf) {
+          setGeofences((prev) => [newGf, ...prev]);
+          return true;
+        }
+        return false;
+      }
+    } catch (err) {
+      console.warn('[App] Save geofence error:', err);
+      return false;
+    }
+  };
+
+  const handleAddGeofence = async (gfData: Partial<Geofence>) => {
+    await handleSaveGeofence(gfData, false);
+  };
+
+  const handleDeleteGeofence = async (id: string): Promise<boolean> => {
     try {
       const ok = await globalSupabaseDataService.deleteGeofence(id);
       if (ok) {
         setGeofences((prev) => prev.filter((g) => g.id !== id));
+        return true;
       }
+      return false;
     } catch (err) {
       console.warn(err);
+      return false;
+    }
+  };
+
+  const handleCreateAlert = async (alertData: any): Promise<FleetEvent | null> => {
+    try {
+      const created = await globalSupabaseDataService.createAlert(alertData);
+      if (created) {
+        setEvents((prev) => [created, ...prev]);
+        return created;
+      }
+      return null;
+    } catch (err) {
+      console.warn('[App] Create alert error:', err);
+      return null;
     }
   };
 
@@ -415,10 +540,25 @@ export function App() {
 
   const activeAlertsCount = events.filter((e) => !e.isAcknowledged).length;
 
-  // Filtered vehicles & states for current view
-  const displayedStates = statusFilter
-    ? currentStates.filter((s) => s.onlineStatus === statusFilter)
+  // Filtered vehicles and states for Admin Live Map based on selected customer & status
+  const adminFilteredVehicles = selectedCustomerId
+    ? vehicles.filter(
+        (v) =>
+          v.customerId === selectedCustomerId ||
+          (v as any).owner_id === selectedCustomerId ||
+          (v as any).user_id === selectedCustomerId
+      )
+    : vehicles;
+
+  const adminFilteredVehicleIds = new Set(adminFilteredVehicles.map((v) => v.id));
+
+  const adminFilteredStates = selectedCustomerId
+    ? currentStates.filter((s) => adminFilteredVehicleIds.has(s.vehicleId))
     : currentStates;
+
+  const displayedStates = statusFilter
+    ? adminFilteredStates.filter((s) => s.onlineStatus === statusFilter)
+    : adminFilteredStates;
 
   // 1. Initial Authentication Check Loader
   if (isAuthChecking) {
@@ -474,20 +614,22 @@ export function App() {
     );
   }
 
-  // 4. Vehicle scoping for clients
-  const clientVehicles = currentProfile.role === 'client'
-    ? vehicles.filter(
-        (v) =>
-          v.customerId === currentProfile.id ||
-          (v as any).owner_id === currentProfile.id ||
-          (v as any).user_id === currentProfile.id
-      )
-    : vehicles;
+  // 4. Vehicle scoping for clients (Only show vehicles whose GPS device is active/not turned off)
+  const inactiveDeviceIds = new Set(devices.filter((d) => d.status === 'INACTIVE').map((d) => d.id));
+
+  const clientVehicles = (
+    currentProfile.role === 'client'
+      ? vehicles.filter(
+          (v) =>
+            v.customerId === currentProfile.id ||
+            (v as any).owner_id === currentProfile.id ||
+            (v as any).user_id === currentProfile.id
+        )
+      : vehicles
+  ).filter((v) => !v.deviceId || !inactiveDeviceIds.has(v.deviceId));
 
   const clientVehicleIds = new Set(clientVehicles.map((v) => v.id));
-  const clientStates = currentProfile.role === 'client'
-    ? currentStates.filter((s) => clientVehicleIds.has(s.vehicleId))
-    : currentStates;
+  const clientStates = currentStates.filter((s) => clientVehicleIds.has(s.vehicleId));
 
   // 5. Render Customer Mobile Experience if toggled or if client role
   if (isMobileView || currentProfile.role === 'client') {
@@ -498,6 +640,7 @@ export function App() {
           vehicles={clientVehicles.length > 0 ? clientVehicles : vehicles}
           currentStates={clientStates.length > 0 ? clientStates : currentStates}
           events={events}
+          geofences={geofences}
           onSelectVehicle={(id) => {
             setSelectedVehicleId(id);
           }}
@@ -505,6 +648,10 @@ export function App() {
           onChangePassword={() => setIsChangePasswordOpen(true)}
           onLogout={handleLogout}
           onLoadHistory={handleLoadHistory}
+          onSaveGeofence={handleSaveGeofence}
+          onDeleteGeofence={handleDeleteGeofence}
+          onAcknowledgeAlert={handleAcknowledgeEvent}
+          onCreateAlert={handleCreateAlert}
         />
         {/* Toggle back button for admin / staff testing */}
         {currentProfile.role !== 'client' && (
@@ -563,164 +710,24 @@ export function App() {
 
         {/* Content View Area */}
         <main className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
-          {/* TAB 1: DASHBOARD */}
-          {activeTab === 'dashboard' && (
-            <div className="space-y-6">
-              {/* Header Info */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div>
-                  <h1 className="text-2xl font-bold text-slate-900">پیشخوان مانیتورینگ و وضعیت ناوگان</h1>
-                  <p className="text-slate-500 text-xs mt-1">
-                    اتصال فعال به پایگاه داده Supabase PostgreSQL - {new Date().toLocaleTimeString('fa-AF')}
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setActiveTab('reports')}
-                    className="px-3.5 py-1.5 bg-white border border-slate-200 rounded-md text-xs font-medium text-slate-700 hover:bg-slate-50 shadow-xs transition"
-                  >
-                    گزارش‌های روزانه
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('vehicles')}
-                    className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-md text-xs font-medium shadow-xs transition"
-                  >
-                    ثبت موتر جدید
-                  </button>
-                </div>
-              </div>
-
-              {/* KPIs & Stats */}
-              <OverviewStats
+          {/* TAB: LIVE MAP & MONITORING */}
+          {(activeTab === 'map' || (activeTab as string) === 'dashboard') && (
+            <div className="space-y-3.5">
+              <CustomerMapFilter
+                customers={customers}
                 vehicles={vehicles}
                 currentStates={currentStates}
-                events={events}
-                onFilterStatus={(st) => {
-                  setStatusFilter(st);
-                  setActiveTab('map');
-                }}
+                selectedCustomerId={selectedCustomerId}
+                onSelectCustomer={(cId) => setSelectedCustomerId(cId)}
+                selectedVehicleId={selectedVehicleId}
+                onSelectVehicle={(vId) => setSelectedVehicleId(vId)}
+                statusFilter={statusFilter}
+                onSelectStatusFilter={(st) => setStatusFilter(st)}
               />
 
-              {/* Central Interactive Map & Quick Sidebar */}
-              <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                <div className="lg:col-span-3 h-[540px] bg-white p-2 rounded-xl border border-slate-100 shadow-xs overflow-hidden">
-                  <FleetMap
-                    vehicles={vehicles}
-                    currentStates={displayedStates}
-                    geofences={geofences}
-                    selectedVehicleId={selectedVehicleId}
-                    onSelectVehicle={(id) => setSelectedVehicleId(id)}
-                    className="h-full rounded-lg"
-                  />
-                </div>
-
-                {/* Live Fleet Quick Sidebar */}
-                <div className="bg-white border border-slate-100 rounded-xl p-4 shadow-xs flex flex-col h-[540px]">
-                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                    <h3 className="text-sm font-bold text-slate-800">وضعیت زنده وسایط</h3>
-                    <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-md font-mono font-bold">
-                      {vehicles.length} موتر
-                    </span>
-                  </div>
-
-                  <div className="flex-1 overflow-y-auto space-y-2 pt-3">
-                    {vehicles.map((v) => {
-                      const st = currentStates.find((s) => s.vehicleId === v.id);
-                      const isSelected = selectedVehicleId === v.id;
-
-                      const isOffline = !st || st.onlineStatus === VehicleStatus.OFFLINE;
-                      const batteryDisplay =
-                        isOffline
-                          ? 'قطع'
-                          : st?.batteryVoltage !== undefined
-                          ? `${st.batteryVoltage}V`
-                          : 'بدون سنسور';
-
-                      return (
-                        <div
-                          key={v.id}
-                          onClick={() => setSelectedVehicleId(v.id)}
-                          className={`p-3 rounded-lg border text-xs cursor-pointer transition ${
-                            isSelected
-                              ? 'bg-blue-50 border-blue-300 text-blue-950 shadow-xs'
-                              : 'bg-slate-50/60 border-slate-100 hover:bg-slate-100/80 text-slate-700'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between mb-1.5">
-                            <span className="font-bold font-mono text-slate-900">{v.plateNumber}</span>
-                            <span
-                              className={`text-[10px] px-2 py-0.5 rounded font-bold ${
-                                st?.onlineStatus === VehicleStatus.MOVING
-                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                  : st?.onlineStatus === VehicleStatus.IDLE
-                                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                  : st?.onlineStatus === VehicleStatus.STOPPED
-                                  ? 'bg-slate-100 text-slate-600 border border-slate-200'
-                                  : 'bg-rose-50 text-rose-700 border border-rose-200'
-                              }`}
-                            >
-                              {st?.onlineStatus === VehicleStatus.MOVING
-                                ? 'حرکت'
-                                : st?.onlineStatus === VehicleStatus.IDLE
-                                ? 'درجا'
-                                : st?.onlineStatus === VehicleStatus.STOPPED
-                                ? 'پارک'
-                                : 'آفلاین'}
-                            </span>
-                          </div>
-                          <div className="text-[11px] text-slate-500 flex items-center justify-between">
-                            <span>سرعت: <strong className="text-slate-800 font-mono">{st?.speed || 0}</strong> km/h</span>
-                            <span className="font-mono text-slate-600">🔋 {batteryDisplay}</span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 2: LIVE MAP */}
-          {activeTab === 'map' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between bg-white p-3.5 rounded-xl border border-slate-100 shadow-xs">
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-slate-500 font-medium">فیلتر وضعیت ناوگان:</span>
-                  <button
-                    onClick={() => setStatusFilter(undefined)}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition cursor-pointer ${
-                      !statusFilter ? 'bg-blue-600 text-white shadow-xs' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                    }`}
-                  >
-                    همه ({vehicles.length})
-                  </button>
-                  <button
-                    onClick={() => setStatusFilter(VehicleStatus.MOVING)}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition cursor-pointer ${
-                      statusFilter === VehicleStatus.MOVING
-                        ? 'bg-emerald-600 text-white shadow-xs'
-                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                    }`}
-                  >
-                    حرکت
-                  </button>
-                  <button
-                    onClick={() => setStatusFilter(VehicleStatus.STOPPED)}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition cursor-pointer ${
-                      statusFilter === VehicleStatus.STOPPED
-                        ? 'bg-slate-800 text-white shadow-xs'
-                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                    }`}
-                  >
-                    توقف
-                  </button>
-                </div>
-              </div>
-
-              <div className="h-[calc(100vh-180px)] bg-white p-2 rounded-xl border border-slate-100 shadow-xs overflow-hidden">
+              <div className="h-[calc(100vh-210px)] min-h-[500px] bg-white p-2 rounded-xl border border-slate-100 shadow-xs overflow-hidden">
                 <FleetMap
-                  vehicles={vehicles}
+                  vehicles={adminFilteredVehicles}
                   currentStates={displayedStates}
                   geofences={geofences}
                   selectedVehicleId={selectedVehicleId}
@@ -740,6 +747,8 @@ export function App() {
               drivers={drivers}
               customers={customers}
               onAddVehicle={handleAddVehicle}
+              onUpdateVehicle={handleUpdateVehicle}
+              onDeleteVehicle={handleDeleteVehicle}
               onSelectVehicle={(id) => {
                 setSelectedVehicleId(id);
                 setActiveTab('map');
@@ -753,6 +762,8 @@ export function App() {
               devices={devices}
               vehicles={vehicles}
               onAddDevice={handleAddDevice}
+              onUpdateDevice={handleUpdateDevice}
+              onDeleteDevice={handleDeleteDevice}
             />
           )}
 
@@ -765,51 +776,18 @@ export function App() {
             />
           )}
 
-          {/* TAB 6: GEOFENCES */}
-          {activeTab === 'geofences' && (
-            <GeofenceManager
-              geofences={geofences}
-              vehicles={vehicles}
-              onAddGeofence={handleAddGeofence}
-              onDeleteGeofence={handleDeleteGeofence}
-            />
-          )}
-
-          {/* TAB 7: EVENTS & ALERTS */}
-          {activeTab === 'events' && (
-            <EventsAlertsView
-              events={events}
-              vehicles={vehicles}
-              onAcknowledge={handleAcknowledgeEvent}
-            />
-          )}
-
-          {/* TAB 8: REPORTS */}
-          {activeTab === 'reports' && (
-            <ReportsView
-              vehicles={vehicles}
-              currentStates={currentStates}
-            />
-          )}
-
-          {/* TAB 9: DRIVERS */}
-          {activeTab === 'drivers' && (
-            <DriversManager
-              drivers={drivers}
-              vehicles={vehicles}
-            />
-          )}
-
-          {/* TAB 10: CUSTOMERS / CLIENT ONBOARDING */}
+          {/* TAB: CUSTOMERS / CLIENT ONBOARDING */}
           {activeTab === 'customers' && (
             <CustomersManager
               customers={customers}
               vehicles={vehicles}
               currentAdmin={currentProfile || undefined}
+              onUpdateCustomer={handleUpdateClientProfile}
+              onDeleteCustomer={handleDeleteClientProfile}
             />
           )}
 
-          {/* TAB 11: STAFF MANAGEMENT (SUPER ADMIN ONLY) */}
+          {/* TAB: STAFF MANAGEMENT (SUPER ADMIN ONLY) */}
           {activeTab === 'staff' && (
             <StaffManager
               currentAdmin={currentProfile || {
@@ -822,26 +800,6 @@ export function App() {
                 updated_at: new Date().toISOString(),
               }}
             />
-          )}
-
-          {/* TAB 12: COMMANDS */}
-          {activeTab === 'commands' && (
-            <CommandsView
-              vehicles={vehicles}
-              devices={devices}
-              commands={commands}
-              onSendCommand={handleSendCommand}
-            />
-          )}
-
-          {/* TAB 13: DIAGNOSTICS */}
-          {activeTab === 'diagnostics' && (
-            <DiagnosticsView />
-          )}
-
-          {/* TAB 14: MAINTENANCE */}
-          {activeTab === 'maintenance' && (
-            <MaintenanceView vehicles={vehicles} />
           )}
         </main>
       </div>

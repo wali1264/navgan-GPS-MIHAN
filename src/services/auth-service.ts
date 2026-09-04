@@ -93,7 +93,7 @@ export class AuthService {
   public async registerStaffOrAdmin(params: {
     username: string;
     fullName: string;
-    phone: string;
+    phone?: string;
     email?: string;
     password: string;
     role: 'super_admin' | 'staff';
@@ -109,7 +109,7 @@ export class AuthService {
           data: {
             username: params.username.trim(),
             full_name: params.fullName.trim(),
-            phone: params.phone.trim(),
+            phone: params.phone?.trim() || '',
             role: params.role,
             notes: params.notes || '',
           },
@@ -132,7 +132,7 @@ export class AuthService {
           id: authData.user.id,
           username: params.username.trim(),
           full_name: params.fullName.trim(),
-          phone: params.phone.trim(),
+          phone: params.phone?.trim() || '',
           email,
           role: params.role,
           status: 'pending', // Pending approval by Super Admin or database admin
@@ -150,7 +150,7 @@ export class AuthService {
           id: authData.user.id,
           username: params.username.trim(),
           full_name: params.fullName.trim(),
-          phone: params.phone.trim(),
+          phone: params.phone?.trim() || '',
           email,
           role: params.role,
           status: 'pending',
@@ -305,6 +305,66 @@ export class AuthService {
       return (data as UserProfile[]) || [];
     } catch {
       return [];
+    }
+  }
+
+  /**
+   * Update Client Profile Details
+   */
+  public async updateClientProfile(
+    id: string,
+    updates: {
+      fullName?: string;
+      phone?: string;
+      notes?: string;
+    }
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const payload: any = {};
+      if (updates.fullName !== undefined) payload.full_name = updates.fullName.trim();
+      if (updates.phone !== undefined) payload.phone = updates.phone.trim();
+      if (updates.notes !== undefined) payload.notes = updates.notes;
+      payload.updated_at = new Date().toISOString();
+
+      const { error } = await supabase
+        .from('profiles')
+        .update(payload)
+        .eq('id', id);
+
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'خطا در ویرایش اطلاعات مشتری' };
+    }
+  }
+
+  /**
+   * Delete Client Profile (Only if no vehicles are owned)
+   */
+  public async deleteClientProfile(id: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      // Check if client owns any vehicles
+      const { data: clientVehicles } = await supabase
+        .from('vehicles')
+        .select('id, name, plate_number')
+        .eq('owner_id', id);
+
+      if (clientVehicles && clientVehicles.length > 0) {
+        return {
+          success: false,
+          error: `این مشتری دارای ${clientVehicles.length} موتر/سوژه ثبت‌شده است. ابتدا وسایط را منتقل یا حذف نمایید.`,
+        };
+      }
+
+      const { error } = await supabase.from('profiles').delete().eq('id', id);
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'خطا در حذف مشتری' };
     }
   }
 

@@ -14,6 +14,8 @@ interface VehiclesManagerProps {
   drivers: Driver[];
   customers?: any[];
   onAddVehicle: (vehicle: Partial<Vehicle>) => Promise<{ success: boolean; error?: string } | any> | void;
+  onUpdateVehicle?: (id: string, vehicle: Partial<Vehicle>) => Promise<{ success: boolean; error?: string } | any> | void;
+  onDeleteVehicle?: (id: string) => Promise<{ success: boolean; error?: string } | any> | void;
   onSelectVehicle: (vehicleId: string) => void;
 }
 
@@ -24,11 +26,14 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
   drivers,
   customers = [],
   onAddVehicle,
+  onUpdateVehicle,
+  onDeleteVehicle,
   onSelectVehicle,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('ALL');
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingVehicleId, setEditingVehicleId] = useState<string | null>(null);
 
   // Form State
   const [plateNumber, setPlateNumber] = useState('');
@@ -45,6 +50,58 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
 
+  // Delete State
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState('');
+
+  const openAddModal = () => {
+    setEditingVehicleId(null);
+    setPlateNumber('');
+    setVehicleName('');
+    setSelectedDeviceId('');
+    setSelectedCustomerId('');
+    setFormError('');
+    setFormSuccess('');
+    setIsModalOpen(true);
+  };
+
+  const openEditModal = (vehicle: Vehicle) => {
+    setEditingVehicleId(vehicle.id);
+    setPlateNumber(vehicle.plateNumber || '');
+    setVehicleName(vehicle.vehicleName || '');
+    setSelectedDeviceId(vehicle.deviceId || '');
+    setSelectedCustomerId(vehicle.customerId || '');
+    setFormError('');
+    setFormSuccess('');
+    setIsModalOpen(true);
+  };
+
+  const handleDelete = async (vehicle: Vehicle) => {
+    if (vehicle.deviceId) {
+      alert('این سوژه دارای دستگاه GPS متصل است و قابل حذف نیست. ابتدا از بخش ویرایش، دستگاه را جدا (بدون ردیاب) کنید.');
+      return;
+    }
+
+    if (!confirm(`آیا از حذف سوژه «${vehicle.plateNumber} (${vehicle.vehicleName})» اطمینان دارید؟`)) {
+      return;
+    }
+
+    setDeletingId(vehicle.id);
+    setDeleteError('');
+    try {
+      if (onDeleteVehicle) {
+        const res = await onDeleteVehicle(vehicle.id);
+        if (res && res.success === false) {
+          alert(res.error || 'خطا در حذف سوژه');
+        }
+      }
+    } catch (err: any) {
+      alert(err.message || 'خطا در حذف سوژه');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const filteredVehicles = vehicles.filter((v) => {
     const matchesSearch =
       v.plateNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -54,10 +111,10 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
     return matchesSearch && matchesType;
   });
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!plateNumber.trim() || !vehicleName.trim()) {
-      setFormError('لطفاً نمبر پلیت و عنوان موتر را وارد نمایید');
+      setFormError('لطفاً شناسه/نمبر پلیت و عنوان توصیفی را وارد نمایید');
       return;
     }
 
@@ -66,40 +123,57 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
     setIsSubmitting(true);
 
     try {
-      const res = await onAddVehicle({
-        plateNumber: plateNumber.trim(),
-        vehicleName: vehicleName.trim(),
-        vehicleType,
-        brand,
-        model,
-        year: 2023,
-        color: 'سفید',
-        speedLimit,
-        odometer: 0,
-        deviceId: selectedDeviceId.trim() || undefined,
-        customerId: selectedCustomerId.trim() || undefined,
-      });
+      if (editingVehicleId) {
+        if (onUpdateVehicle) {
+          const res = await onUpdateVehicle(editingVehicleId, {
+            plateNumber: plateNumber.trim(),
+            vehicleName: vehicleName.trim(),
+            deviceId: selectedDeviceId.trim() || undefined,
+            customerId: selectedCustomerId.trim() || undefined,
+          });
 
-      if (res && res.success === false) {
-        setFormError(res.error || 'خطا در ثبت موتر');
-        setIsSubmitting(false);
-        return;
+          if (res && res.success === false) {
+            setFormError(res.error || 'خطا در ویرایش سوژه');
+            setIsSubmitting(false);
+            return;
+          }
+        }
+        setFormSuccess('سوژه با موفقیت ویرایش گردید.');
+      } else {
+        const res = await onAddVehicle({
+          plateNumber: plateNumber.trim(),
+          vehicleName: vehicleName.trim(),
+          vehicleType,
+          brand,
+          model,
+          year: 2023,
+          color: 'سفید',
+          speedLimit,
+          odometer: 0,
+          deviceId: selectedDeviceId.trim() || undefined,
+          customerId: selectedCustomerId.trim() || undefined,
+        });
+
+        if (res && res.success === false) {
+          setFormError(res.error || 'خطا در ثبت سوژه');
+          setIsSubmitting(false);
+          return;
+        }
+        setFormSuccess('سوژه با موفقیت در سامانه ثبت گردید.');
       }
 
-      setFormSuccess('موتر با موفقیت در سیستم ثبت گردید.');
       setTimeout(() => {
-        setIsAddModalOpen(false);
+        setIsModalOpen(false);
         setPlateNumber('');
         setVehicleName('');
         setSelectedCustomerId('');
         setSelectedDeviceId('');
-        setDriverName('');
-        setDriverPhone('');
         setFormSuccess('');
         setIsSubmitting(false);
-      }, 1500);
+        setEditingVehicleId(null);
+      }, 1200);
     } catch (err: any) {
-      setFormError(err.message || 'خطا در ثبت موتر');
+      setFormError(err.message || 'خطا در پردازش اطلاعات');
       setIsSubmitting(false);
     }
   };
@@ -146,11 +220,11 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
         </div>
 
         <button
-          onClick={() => setIsAddModalOpen(true)}
+          onClick={openAddModal}
           className="w-full sm:w-auto px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs rounded-md shadow-xs flex items-center justify-center gap-2 transition"
         >
           <Plus className="w-4 h-4" />
-          <span>افزودن موتر جدید به ناوگان</span>
+          <span>ثبت سوژه جدید</span>
         </button>
       </div>
 
@@ -165,7 +239,7 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
             سیستم آماده پذیرش وسایط نقلیه واقعی است. با کلیک بر روی دکمه زیر، اولین موتر ناوگان را ثبت نمایید.
           </p>
           <button
-            onClick={() => setIsAddModalOpen(true)}
+            onClick={openAddModal}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs rounded-md shadow-xs inline-flex items-center gap-2 transition"
           >
             <Plus className="w-4 h-4" />
@@ -275,6 +349,37 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
                     <MapPin className="w-3.5 h-3.5 text-blue-600" />
                     <span>ردیابی زنده در نقشه</span>
                   </button>
+
+                  {/* Edit Button */}
+                  <button
+                    onClick={() => openEditModal(v)}
+                    title="ویرایش مشخصات سوژه"
+                    className="p-2 bg-white hover:bg-blue-50 text-slate-600 hover:text-blue-600 rounded-md border border-slate-200 hover:border-blue-300 transition shadow-xs flex items-center justify-center"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+
+                  {/* Delete Button (Disabled if GPS attached) */}
+                  <button
+                    onClick={() => handleDelete(v)}
+                    disabled={Boolean(v.deviceId) || deletingId === v.id}
+                    title={
+                      v.deviceId
+                        ? 'این سوژه دارای ردیاب متصل است. ابتدا اتصال ردیاب را از ویرایش قطع کنید.'
+                        : 'حذف سوژه از سامانه'
+                    }
+                    className={`p-2 rounded-md border transition shadow-xs flex items-center justify-center ${
+                      v.deviceId
+                        ? 'bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed'
+                        : 'bg-white hover:bg-rose-50 text-slate-600 hover:text-rose-600 border-slate-200 hover:border-rose-300 cursor-pointer'
+                    }`}
+                  >
+                    {deletingId === v.id ? (
+                      <div className="w-3.5 h-3.5 border-2 border-rose-600 border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Trash2 className="w-3.5 h-3.5" />
+                    )}
+                  </button>
                 </div>
               </div>
             );
@@ -282,14 +387,16 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
         </div>
       )}
 
-      {/* Add Vehicle Modal */}
-      {isAddModalOpen && (
+      {/* Add / Edit Subject Modal */}
+      {isModalOpen && (
         <div className="fixed inset-0 z-[99999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white border border-slate-100 rounded-xl w-full max-w-lg p-6 shadow-2xl space-y-4 z-[100000]">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h2 className="text-base font-bold text-slate-900">ثبت موتر جدید در سامانه ردیابی</h2>
+              <h2 className="text-base font-bold text-slate-900">
+                {editingVehicleId ? 'ویرایش مشخصات سوژه' : 'ثبت سوژه جدید در سامانه ردیابی'}
+              </h2>
               <button
-                onClick={() => setIsAddModalOpen(false)}
+                onClick={() => setIsModalOpen(false)}
                 className="text-slate-400 hover:text-slate-700 text-sm"
               >
                 ✕
@@ -310,12 +417,12 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
               </div>
             )}
 
-            <form onSubmit={handleCreate} className="space-y-3.5 text-right">
+            <form onSubmit={handleSave} className="space-y-3.5 text-right">
               <div>
-                <label className="block text-xs text-slate-700 font-medium mb-1">نمبر پلیت موتر (ضروری)</label>
+                <label className="block text-xs text-slate-700 font-medium mb-1">شناسه یا نمبر پلیت (ضروری)</label>
                 <input
                   type="text"
-                  placeholder="مثال: کابل 4 - 84920"
+                  placeholder="مثال: کابل 4 - 84920 یا ID-102"
                   value={plateNumber}
                   onChange={(e) => setPlateNumber(e.target.value)}
                   className="w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
@@ -324,10 +431,10 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs text-slate-700 font-medium mb-1">نام یا عنوان توصیفی موتر</label>
+                <label className="block text-xs text-slate-700 font-medium mb-1">نام یا عنوان توصیفی</label>
                 <input
                   type="text"
-                  placeholder="مثال: تویوتا کرولا سفید - شعبه مرکزی"
+                  placeholder="مثال: تویوتا کرولا، احمد رحیمی، اسب مسابقه، کانتینر بار"
                   value={vehicleName}
                   onChange={(e) => setVehicleName(e.target.value)}
                   className="w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
@@ -335,36 +442,15 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-slate-700 font-medium mb-1">نوع واسطه نقلیه</label>
-                  <select
-                    value={vehicleType}
-                    onChange={(e) => setVehicleType(e.target.value as VehicleType)}
-                    className="w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
-                  >
-                    <option value={VehicleType.CAR}>موتر سواری</option>
-                    <option value={VehicleType.TRUCK}>لاری / باربری سنگین</option>
-                    <option value={VehicleType.PICKUP}>پیک‌اپ</option>
-                    <option value={VehicleType.VAN}>هایس / ون</option>
-                    <option value={VehicleType.BUS}>ملی‌بس</option>
-                    <option value={VehicleType.TAXI}>تکسی</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs text-slate-700 font-medium mb-1">حد مجاز سرعت (km/h)</label>
-                  <input
-                    type="number"
-                    value={speedLimit}
-                    onChange={(e) => setSpeedLimit(parseInt(e.target.value, 10))}
-                    className="w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-              </div>
-
               <div>
-                <label className="block text-xs text-slate-700 font-medium mb-1">تخصیص دستگاه GPS ردیاب</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs text-slate-700 font-medium">تخصیص دستگاه GPS ردیاب</label>
+                  {editingVehicleId && (
+                    <span className="text-[11px] text-amber-600">
+                      (جهت امکان حذف سوژه، روی «بدون ردیاب» تنظیم کنید)
+                    </span>
+                  )}
+                </div>
                 <select
                   value={selectedDeviceId}
                   onChange={(e) => setSelectedDeviceId(e.target.value)}
@@ -398,7 +484,7 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setIsAddModalOpen(false)}
+                  onClick={() => setIsModalOpen(false)}
                   className="px-4 py-2 rounded-md bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-medium shadow-xs"
                 >
                   انصراف
@@ -414,7 +500,7 @@ export const VehiclesManager: React.FC<VehiclesManagerProps> = ({
                       <span>در حال ثبت...</span>
                     </>
                   ) : (
-                    <span>ذخیره و ثبت در سیستم</span>
+                    <span>{editingVehicleId ? 'ذخیره تغییرات سوژه' : 'ذخیره و ثبت در سیستم'}</span>
                   )}
                 </button>
               </div>

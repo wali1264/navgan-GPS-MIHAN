@@ -20,7 +20,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
   const tabs = [
     { id: 'map', label: 'نقشه زنده', icon: MapPin, badge: activeVehiclesCount },
     { id: 'history', label: 'تاریخچه ۳۰ روز', icon: History },
-    { id: 'vehicles', label: 'لیست موترها', icon: Car },
+    { id: 'vehicles', label: 'لیست دستگاه‌ها', icon: Car },
     { id: 'account', label: 'حساب من', icon: User },
   ];
 

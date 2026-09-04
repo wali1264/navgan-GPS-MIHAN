@@ -14,8 +14,13 @@ interface EventsAlertsViewProps {
 
 export const EventsAlertsView: React.FC<EventsAlertsViewProps> = ({ events, vehicles, onAcknowledge }) => {
   const [severityFilter, setSeverityFilter] = useState<string>('ALL');
+  const [vehicleFilter, setVehicleFilter] = useState<string>('');
 
-  const filteredEvents = events.filter((e) => severityFilter === 'ALL' || e.severity === severityFilter);
+  const filteredEvents = events.filter((e) => {
+    const matchesSeverity = severityFilter === 'ALL' || e.severity === severityFilter;
+    const matchesVehicle = !vehicleFilter || e.vehicleId === vehicleFilter;
+    return matchesSeverity && matchesVehicle;
+  });
 
   const getSeverityBadge = (severity: EventSeverity) => {
     switch (severity) {
@@ -56,7 +61,24 @@ export const EventsAlertsView: React.FC<EventsAlertsViewProps> = ({ events, vehi
           <p className="text-xs text-slate-500 mt-0.5">ثبت آنی تمام تخلفات سرعت، ورود/خروج محدوده، سویچ و آلارم‌های SOS</p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Vehicle Filter */}
+          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-md px-2.5 py-1 text-xs">
+            <span className="text-slate-500 font-medium">موتر:</span>
+            <select
+              value={vehicleFilter}
+              onChange={(e) => setVehicleFilter(e.target.value)}
+              className="bg-transparent border-none text-xs font-bold text-slate-700 focus:outline-none cursor-pointer"
+            >
+              <option value="">همه وسایط</option>
+              {vehicles.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.plateNumber} ({v.vehicleName})
+                </option>
+              ))}
+            </select>
+          </div>
+
           <button
             onClick={() => setSeverityFilter('ALL')}
             className={`px-3 py-1.5 rounded-md text-xs font-medium transition shadow-xs ${

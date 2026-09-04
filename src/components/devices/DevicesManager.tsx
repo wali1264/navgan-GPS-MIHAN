@@ -5,17 +5,26 @@
 import React, { useState } from 'react';
 import { Device, Vehicle } from '../../shared/types/models';
 import { ProtocolType } from '../../shared/types/enums';
-import { Cpu, Plus, Search, CheckCircle, AlertCircle, Signal, Radio, Terminal } from 'lucide-react';
+import { Cpu, Plus, Search, CheckCircle, AlertCircle, Signal, Radio, Terminal, Edit2, Trash2, Power, PowerOff } from 'lucide-react';
 
 interface DevicesManagerProps {
   devices: Device[];
   vehicles: Vehicle[];
   onAddDevice: (device: Partial<Device>) => Promise<{ success: boolean; error?: string } | any> | void;
+  onUpdateDevice?: (id: string, updates: any) => Promise<{ success: boolean; error?: string } | any> | void;
+  onDeleteDevice?: (id: string) => Promise<{ success: boolean; error?: string } | any> | void;
 }
 
-export const DevicesManager: React.FC<DevicesManagerProps> = ({ devices, vehicles, onAddDevice }) => {
+export const DevicesManager: React.FC<DevicesManagerProps> = ({
+  devices,
+  vehicles,
+  onAddDevice,
+  onUpdateDevice,
+  onDeleteDevice,
+}) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingDeviceId, setEditingDeviceId] = useState<string | null>(null);
 
   const [imei, setImei] = useState('');
   const [protocol, setProtocol] = useState<ProtocolType>(ProtocolType.GT06);
@@ -26,6 +35,9 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({ devices, vehicle
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
 
+  // Delete State
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
   const filteredDevices = devices.filter(
     (d) =>
       d.imei.includes(searchTerm) ||
@@ -33,7 +45,70 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({ devices, vehicle
       (d.simNumber && d.simNumber.includes(searchTerm))
   );
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const openAddModal = () => {
+    setEditingDeviceId(null);
+    setImei('');
+    setProtocol(ProtocolType.GT06);
+    setModel('Concox GT06N');
+    setSimNumber('');
+    setSimOperator('Roshan');
+    setFormError('');
+    setFormSuccess('');
+    setIsModalOpen(true);
+  };
+
+  const openEditModal = (d: Device) => {
+    setEditingDeviceId(d.id);
+    setImei(d.imei);
+    setProtocol(d.protocol);
+    setModel(d.model);
+    setSimNumber(d.simNumber || '');
+    setSimOperator(d.simOperator || 'Roshan');
+    setFormError('');
+    setFormSuccess('');
+    setIsModalOpen(true);
+  };
+
+  const handleToggleStatus = async (d: Device) => {
+    if (!onUpdateDevice) return;
+    const newStatus = d.status === 'ACTIVE' ? 'offline' : 'online';
+    try {
+      const res = await onUpdateDevice(d.id, { status: newStatus });
+      if (res && res.success === false) {
+        alert(res.error || 'خطا در تغییر وضعیت دستگاه');
+      }
+    } catch (err: any) {
+      alert(err.message || 'خطا در تغییر وضعیت دستگاه');
+    }
+  };
+
+  const handleDelete = async (d: Device) => {
+    const assignedVehicle = vehicles.find((v) => v.deviceId === d.id || v.id === d.assignedVehicleId);
+    if (assignedVehicle) {
+      alert(`این دستگاه به سوژه (${assignedVehicle.plateNumber || assignedVehicle.vehicleName}) متصل است و قابل حذف نیست. ابتدا اتصال را قطع کنید.`);
+      return;
+    }
+
+    if (!confirm(`آیا از حذف دستگاه با کد IMEI: ${d.imei} اطمینان دارید؟`)) {
+      return;
+    }
+
+    setDeletingId(d.id);
+    try {
+      if (onDeleteDevice) {
+        const res = await onDeleteDevice(d.id);
+        if (res && res.success === false) {
+          alert(res.error || 'خطا در حذف دستگاه');
+        }
+      }
+    } catch (err: any) {
+      alert(err.message || 'خطا در حذف دستگاه');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!imei.trim()) {
       setFormError('لطفاً کد ۱۵ رقمی IMEI دستگاه را وارد نمایید');
@@ -45,31 +120,50 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({ devices, vehicle
     setIsSubmitting(true);
 
     try {
-      const res = await onAddDevice({
-        imei: imei.trim(),
-        protocol,
-        model,
-        simNumber: simNumber.trim(),
-        simOperator,
-        status: 'ACTIVE',
-      });
+      if (editingDeviceId) {
+        if (onUpdateDevice) {
+          const res = await onUpdateDevice(editingDeviceId, {
+            protocol,
+            model_name: model,
+            sim_number: simNumber.trim(),
+            sim_operator: simOperator,
+          });
 
-      if (res && res.success === false) {
-        setFormError(res.error || 'خطا در ثبت دستگاه GPS');
-        setIsSubmitting(false);
-        return;
+          if (res && res.success === false) {
+            setFormError(res.error || 'خطا در ویرایش دستگاه');
+            setIsSubmitting(false);
+            return;
+          }
+        }
+        setFormSuccess('مشخصات دستگاه با موفقیت ویرایش گردید.');
+      } else {
+        const res = await onAddDevice({
+          imei: imei.trim(),
+          protocol,
+          model,
+          simNumber: simNumber.trim(),
+          simOperator,
+          status: 'ACTIVE',
+        });
+
+        if (res && res.success === false) {
+          setFormError(res.error || 'خطا در ثبت دستگاه GPS');
+          setIsSubmitting(false);
+          return;
+        }
+        setFormSuccess('دستگاه GPS با موفقیت در سامانه ثبت گردید.');
       }
 
-      setFormSuccess('دستگاه GPS با موفقیت در سامانه ثبت گردید.');
       setTimeout(() => {
-        setIsAddModalOpen(false);
+        setIsModalOpen(false);
         setImei('');
         setSimNumber('');
         setFormSuccess('');
         setIsSubmitting(false);
-      }, 1500);
+        setEditingDeviceId(null);
+      }, 1200);
     } catch (err: any) {
-      setFormError(err.message || 'خطا در ثبت دستگاه GPS');
+      setFormError(err.message || 'خطا در ثبت یا ویرایش دستگاه');
       setIsSubmitting(false);
     }
   };
@@ -90,7 +184,7 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({ devices, vehicle
         </div>
 
         <button
-          onClick={() => setIsAddModalOpen(true)}
+          onClick={openAddModal}
           className="w-full sm:w-auto px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs rounded-md shadow-xs flex items-center justify-center gap-2 transition"
         >
           <Plus className="w-4 h-4" />
@@ -108,14 +202,16 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({ devices, vehicle
                 <th className="p-4">پروتکل ارتباطی</th>
                 <th className="p-4">مدل دستگاه</th>
                 <th className="p-4">سیمکارت و اپراتور</th>
-                <th className="p-4">موتر متصل</th>
+                <th className="p-4">سوژه متصل</th>
                 <th className="p-4">تعداد پکت‌ها</th>
-                <th className="p-4">وضعیت اتصال</th>
+                <th className="p-4">وضعیت دستگاه</th>
+                <th className="p-4 text-center">عملیات</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredDevices.map((d) => {
                 const assignedVehicle = vehicles.find((v) => v.deviceId === d.id || v.id === d.assignedVehicleId);
+                const isActive = d.status === 'ACTIVE';
 
                 return (
                   <tr key={d.id} className="hover:bg-slate-50/60 transition">
@@ -139,10 +235,63 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({ devices, vehicle
                     </td>
                     <td className="p-4 font-mono text-slate-800">{d.packetCount.toLocaleString()} پکت</td>
                     <td className="p-4">
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        <CheckCircle className="w-3 h-3" />
-                        فعال (Active)
+                      <span
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[11px] font-bold border ${
+                          isActive
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : 'bg-slate-100 text-slate-600 border-slate-200'
+                        }`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+                        {isActive ? 'فعال (Active)' : 'غیرفعال (Disabled)'}
                       </span>
+                    </td>
+                    <td className="p-4">
+                      <div className="flex items-center justify-center gap-1.5">
+                        {/* Toggle Active / Inactive */}
+                        <button
+                          onClick={() => handleToggleStatus(d)}
+                          title={isActive ? 'خاموش / غیرفعال‌سازی دستگاه' : 'روشن / فعال‌سازی دستگاه'}
+                          className={`p-1.5 rounded border transition shadow-2xs ${
+                            isActive
+                              ? 'bg-white hover:bg-rose-50 text-slate-500 hover:text-rose-600 border-slate-200 hover:border-rose-300'
+                              : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-300 hover:border-emerald-400'
+                          }`}
+                        >
+                          {isActive ? <PowerOff className="w-3.5 h-3.5" /> : <Power className="w-3.5 h-3.5" />}
+                        </button>
+
+                        {/* Edit */}
+                        <button
+                          onClick={() => openEditModal(d)}
+                          title="ویرایش مشخصات دستگاه"
+                          className="p-1.5 bg-white hover:bg-blue-50 text-slate-600 hover:text-blue-600 rounded border border-slate-200 hover:border-blue-300 transition shadow-2xs"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+
+                        {/* Delete (Disabled if assigned to vehicle) */}
+                        <button
+                          onClick={() => handleDelete(d)}
+                          disabled={Boolean(assignedVehicle) || deletingId === d.id}
+                          title={
+                            assignedVehicle
+                              ? `این دستگاه به سوژه (${assignedVehicle.plateNumber}) متصل است و امکان حذف ندارد`
+                              : 'حذف دستگاه از سامانه'
+                          }
+                          className={`p-1.5 rounded border transition shadow-2xs ${
+                            assignedVehicle
+                              ? 'bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed'
+                              : 'bg-white hover:bg-rose-50 text-slate-600 hover:text-rose-600 border-slate-200 hover:border-rose-300 cursor-pointer'
+                          }`}
+                        >
+                          {deletingId === d.id ? (
+                            <div className="w-3.5 h-3.5 border-2 border-rose-600 border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <Trash2 className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -152,13 +301,15 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({ devices, vehicle
         </div>
       </div>
 
-      {/* Add Device Modal */}
-      {isAddModalOpen && (
+      {/* Add / Edit Device Modal */}
+      {isModalOpen && (
         <div className="fixed inset-0 z-[99999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white border border-slate-100 rounded-xl w-full max-w-md p-6 shadow-2xl space-y-4 z-[100000]">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h2 className="text-base font-bold text-slate-900">افزودن دستگاه سخت‌افزاری GPS</h2>
-              <button onClick={() => setIsAddModalOpen(false)} className="text-slate-400 hover:text-slate-700">✕</button>
+              <h2 className="text-base font-bold text-slate-900">
+                {editingDeviceId ? 'ویرایش مشخصات دستگاه GPS' : 'افزودن دستگاه سخت‌افزاری GPS'}
+              </h2>
+              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-700">✕</button>
             </div>
 
             {formError && (
@@ -175,17 +326,23 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({ devices, vehicle
               </div>
             )}
 
-            <form onSubmit={handleCreate} className="space-y-3.5 text-right">
+            <form onSubmit={handleSave} className="space-y-3.5 text-right">
               <div>
                 <label className="block text-xs text-slate-700 font-medium mb-1">کد بین‌المللی IMEI (15 رقمی)</label>
                 <input
                   type="text"
                   placeholder="مثال: 868204051189209"
                   value={imei}
+                  disabled={Boolean(editingDeviceId)}
                   onChange={(e) => setImei(e.target.value)}
-                  className="w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:border-blue-500"
+                  className={`w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:border-blue-500 ${
+                    editingDeviceId ? 'bg-slate-100 cursor-not-allowed opacity-75' : ''
+                  }`}
                   required
                 />
+                {editingDeviceId && (
+                  <p className="text-[11px] text-slate-400 mt-1">کد IMEI به عنوان شناسه منحصر‌به‌فرد سخت‌افزار غیرقابل تغییر است.</p>
+                )}
               </div>
 
               <div>
@@ -244,7 +401,7 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({ devices, vehicle
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setIsAddModalOpen(false)}
+                  onClick={() => setIsModalOpen(false)}
                   className="px-4 py-2 rounded-md bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-medium shadow-xs"
                 >
                   انصراف
@@ -260,7 +417,7 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({ devices, vehicle
                       <span>در حال ثبت...</span>
                     </>
                   ) : (
-                    <span>ثبت دستگاه ردیاب</span>
+                    <span>{editingDeviceId ? 'ذخیره تغییرات دستگاه' : 'ثبت دستگاه ردیاب'}</span>
                   )}
                 </button>
               </div>

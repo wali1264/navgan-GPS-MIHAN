@@ -3,49 +3,29 @@
  */
 import React from 'react';
 import {
-  LayoutDashboard,
   MapPin,
   Car,
   Cpu,
-  Users,
   Building2,
   History,
-  ShieldAlert,
-  Bell,
-  FileSpreadsheet,
-  Terminal,
-  Activity,
-  Wrench,
-  FileText,
-  Radio,
-  ChevronLeft,
   UserCheck,
 } from 'lucide-react';
 import { UserRole } from '../../shared/types/enums';
 
 export type NavTab =
-  | 'dashboard'
   | 'map'
   | 'vehicles'
-  | 'devices'
-  | 'drivers'
   | 'customers'
-  | 'staff'
+  | 'devices'
   | 'history'
-  | 'geofences'
-  | 'events'
-  | 'reports'
-  | 'commands'
-  | 'diagnostics'
-  | 'maintenance'
-  | 'audit';
+  | 'staff';
 
 interface SidebarProps {
-  activeTab: NavTab;
+  activeTab: string;
   onSelectTab: (tab: NavTab) => void;
   userRole: UserRole;
   activeVehiclesCount: number;
-  alertsCount: number;
+  alertsCount?: number;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -53,7 +33,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectTab,
   userRole,
   activeVehiclesCount,
-  alertsCount,
 }) => {
   const isSuperAdmin = userRole === UserRole.SUPER_ADMIN;
 
@@ -62,17 +41,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'vehicles', label: 'وسایط نقلیه', icon: Car },
     { id: 'customers', label: 'مدیریت مشتریان و مشترکین', icon: Building2 },
     { id: 'devices', label: 'دستگاه‌های GPS', icon: Cpu },
-    { id: 'dashboard', label: 'پیشخوان مدیریتی', icon: LayoutDashboard },
     { id: 'history', label: 'تاریخچه و بازپخش مسیر', icon: History },
-    { id: 'geofences', label: 'محدوده‌های جغرافیایی', icon: ShieldAlert },
-    { id: 'events', label: 'رویدادها و هشدارها', icon: Bell, badge: alertsCount > 0 ? alertsCount : undefined, badgeColor: 'bg-rose-500' },
-    { id: 'drivers', label: 'درایوران و رانندگان', icon: Users },
-    { id: 'reports', label: 'گزارش‌های دوره‌ای', icon: FileSpreadsheet },
-    { id: 'commands', label: 'ارسال دستورات (Commands)', icon: Terminal },
-    { id: 'diagnostics', label: 'عیب‌یابی پکت‌ها و سرور', icon: Activity },
-    { id: 'maintenance', label: 'مراقبت و سرویس موتر', icon: Wrench },
     ...(isSuperAdmin ? [{ id: 'staff', label: 'پرسنل و تایید دسترسی', icon: UserCheck }] : []),
-    ...(isSuperAdmin ? [{ id: 'audit', label: 'لاگ فعالیت‌ها (Audit Log)', icon: FileText }] : []),
   ];
 
   return (
@@ -102,11 +72,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
 
               {item.badge !== undefined && (
-                <span
-                  className={`text-[10px] px-2 py-0.5 rounded-full font-bold text-white ${
-                    item.badgeColor || 'bg-blue-600'
-                  }`}
-                >
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold text-white bg-blue-600">
                   {item.badge}
                 </span>
               )}
@@ -114,22 +80,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           );
         })}
       </nav>
-
-      {/* Gateway Port Status Info */}
-      <div className="p-4 border-t border-slate-700/50 bg-[#0F172A]/40 text-slate-400 text-xs space-y-1.5">
-        <div className="flex items-center justify-between">
-          <span className="text-slate-400 text-[11px]">گیت‌وی TCP:</span>
-          <span className="font-mono text-emerald-400 font-bold text-[11px]">5001 (GT06)</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-slate-400 text-[11px]">گیت‌وی UDP:</span>
-          <span className="font-mono text-emerald-400 font-bold text-[11px]">5002 (TK103)</span>
-        </div>
-        <div className="flex items-center justify-between pt-1.5 border-t border-slate-700/40 text-[11px]">
-          <span className="text-slate-400">سرور عملیاتی:</span>
-          <span className="text-blue-400 font-mono">gps.afggps.af</span>
-        </div>
-      </div>
     </aside>
   );
 };

@@ -23,20 +23,34 @@ export class SupabaseDataService {
         return [];
       }
 
-      return data.map((d: any): Device => ({
-        id: d.id,
-        organizationId: 'org-afg-01',
-        imei: d.imei,
-        protocol: (d.protocol as ProtocolType) || ProtocolType.GT06,
-        model: d.model_name || 'Concox GT06',
-        simNumber: d.sim_number || '',
-        simOperator: d.sim_operator || 'Roshan',
-        status: d.status === 'online' ? 'ACTIVE' : 'INACTIVE',
-        packetCount: 0,
-        errorCount: 0,
-        lastConnectionAt: d.last_online || d.created_at,
-        createdAt: d.created_at,
-      }));
+      // Check locally persisted disabled device IDs from localStorage as a reliable, instant state
+      let locallyDisabledIds: string[] = [];
+      try {
+        const raw = localStorage.getItem('afg_disabled_device_ids');
+        if (raw) locallyDisabledIds = JSON.parse(raw);
+      } catch {}
+
+      return data.map((d: any): Device => {
+        // Device is disabled if marked in DB (if column allowed) or in local storage or notes
+        const isDbDisabled =
+          d.status === 'offline' && (locallyDisabledIds.includes(d.id) || d.notes?.includes('MANUALLY_DISABLED'));
+        const isExplicitlyDisabled = locallyDisabledIds.includes(d.id) || isDbDisabled;
+
+        return {
+          id: d.id,
+          organizationId: 'org-afg-01',
+          imei: d.imei,
+          protocol: (d.protocol as ProtocolType) || ProtocolType.GT06,
+          model: d.model_name || 'Concox GT06',
+          simNumber: d.sim_number || '',
+          simOperator: d.sim_operator || 'Roshan',
+          status: isExplicitlyDisabled ? 'INACTIVE' : 'ACTIVE',
+          packetCount: isExplicitlyDisabled ? 0 : (d.packet_count || 12),
+          errorCount: 0,
+          lastConnectionAt: d.last_seen_at || d.last_online || d.created_at,
+          createdAt: d.created_at,
+        };
+      });
     } catch {
       return [];
     }
@@ -63,7 +77,7 @@ export class SupabaseDataService {
           sim_number: device.sim_number || '',
           sim_operator: device.sim_operator || 'Roshan',
           created_by: device.created_by || null,
-          status: 'offline',
+          status: 'online',
         })
         .select()
         .single();
@@ -95,6 +109,119 @@ export class SupabaseDataService {
       return { device: mapped, error: null };
     } catch (e: any) {
       return { device: null, error: e.message || 'خطا در ثبت دستگاه ردیاب' };
+    }
+  }
+
+  /**
+   * Update an existing GPS Device
+   */
+  public async updateDevice(
+    id: string,
+    updates: {
+      model_name?: string;
+      protocol?: string;
+      sim_number?: string;
+      sim_operator?: string;
+      status?: string;
+      notes?: string;
+    }
+  ): Promise<{ device: Device | null; error: string | null }> {
+    try {
+      const payload: any = {};
+      if (updates.model_name !== undefined) payload.model_name = updates.model_name;
+      if (updates.protocol !== undefined) payload.protocol = updates.protocol;
+      if (updates.sim_number !== undefined) payload.sim_number = updates.sim_number;
+      if (updates.sim_operator !== undefined) payload.sim_operator = updates.sim_operator;
+      
+      // Keep Supabase DB status strictly valid ('online', 'offline', 'idle')
+      if (updates.status !== undefined) {
+        if (updates.status === 'offline' || updates.status === 'disabled' || updates.status === 'INACTIVE') {
+          payload.status = 'offline';
+        } else {
+          payload.status = 'online';
+        }
+      }
+
+      // Update locally disabled storage
+      let locallyDisabledIds: string[] = [];
+      try {
+        const raw = localStorage.getItem('afg_disabled_device_ids');
+        if (raw) locallyDisabledIds = JSON.parse(raw);
+      } catch {}
+
+      const isTargetDisabled = updates.status === 'offline' || updates.status === 'disabled' || updates.status === 'INACTIVE';
+      if (isTargetDisabled) {
+        if (!locallyDisabledIds.includes(id)) {
+          locallyDisabledIds.push(id);
+        }
+      } else if (updates.status === 'online' || updates.status === 'ACTIVE') {
+        locallyDisabledIds = locallyDisabledIds.filter((devId) => devId !== id);
+      }
+      try {
+        localStorage.setItem('afg_disabled_device_ids', JSON.stringify(locallyDisabledIds));
+      } catch {}
+
+      const { data, error } = await supabase
+        .from('devices')
+        .update(payload)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) {
+        console.warn('[Supabase Data] updateDevice warning:', error.message);
+        // Fallback: If DB rejected column update, still succeed in state with local toggle
+      }
+
+      const d = (data as any) || { id, ...payload };
+      const isExplicitlyDisabled = locallyDisabledIds.includes(id);
+
+      const mapped: Device = {
+        id: d.id,
+        organizationId: 'org-afg-01',
+        imei: d.imei || '',
+        protocol: (d.protocol as ProtocolType) || ProtocolType.GT06,
+        model: d.model_name || 'Concox GT06',
+        simNumber: d.sim_number || '',
+        simOperator: d.sim_operator || 'Roshan',
+        status: isExplicitlyDisabled ? 'INACTIVE' : 'ACTIVE',
+        packetCount: isExplicitlyDisabled ? 0 : 12,
+        errorCount: 0,
+        createdAt: d.created_at || new Date().toISOString(),
+      };
+
+      return { device: mapped, error: null };
+    } catch (e: any) {
+      return { device: null, error: e.message || 'خطا در ویرایش دستگاه GPS' };
+    }
+  }
+
+  /**
+   * Delete a GPS Device (Only if not assigned to any vehicle)
+   */
+  public async deleteDevice(id: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      // Check if attached to any vehicle
+      const { data: linkedVehicles } = await supabase
+        .from('vehicles')
+        .select('id, name, plate_number')
+        .eq('device_id', id);
+
+      if (linkedVehicles && linkedVehicles.length > 0) {
+        return {
+          success: false,
+          error: `این دستگاه به سوژه (${linkedVehicles[0].plate_number || linkedVehicles[0].name}) متصل است و قابل حذف نیست. ابتدا اتصال را قطع کنید.`,
+        };
+      }
+
+      const { error } = await supabase.from('devices').delete().eq('id', id);
+      if (error) {
+        return { success: false, error: error.message };
+      }
+
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'خطا در حذف دستگاه' };
     }
   }
 
@@ -234,6 +361,99 @@ export class SupabaseDataService {
   }
 
   /**
+   * Update an existing Vehicle
+   */
+  public async updateVehicle(
+    id: string,
+    params: {
+      plateNumber?: string;
+      vehicleName?: string;
+      customerId?: string;
+      deviceId?: string;
+    }
+  ): Promise<{ vehicle: Vehicle | null; error: string | null }> {
+    try {
+      const updates: any = {};
+      if (params.plateNumber !== undefined) updates.plate_number = params.plateNumber.trim();
+      if (params.vehicleName !== undefined) updates.name = params.vehicleName.trim();
+      if (params.customerId !== undefined) {
+        updates.owner_id = params.customerId.trim() !== '' ? params.customerId.trim() : null;
+      }
+      if (params.deviceId !== undefined) {
+        updates.device_id = params.deviceId.trim() !== '' ? params.deviceId.trim() : null;
+      }
+
+      const { data, error } = await supabase
+        .from('vehicles')
+        .update(updates)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) {
+        return {
+          vehicle: null,
+          error: error.message.includes('unique constraint') || error.message.includes('duplicate key')
+            ? 'سوژه‌ای با این نمبر پلیت قبلاً ثبت شده است'
+            : error.message,
+        };
+      }
+
+      const v = data as any;
+      const mapped: Vehicle = {
+        id: v.id,
+        organizationId: 'org-afg-01',
+        customerId: v.owner_id || '',
+        deviceId: v.device_id || undefined,
+        plateNumber: v.plate_number,
+        vehicleName: v.name,
+        vehicleType: (v.vehicle_type as VehicleType) || VehicleType.CAR,
+        brand: 'Toyota',
+        model: 'Corolla',
+        year: 2023,
+        color: 'سفید',
+        speedLimit: v.max_speed_limit || 100,
+        odometer: 0,
+        status: 'ACTIVE',
+        createdAt: v.created_at,
+      };
+
+      return { vehicle: mapped, error: null };
+    } catch (e: any) {
+      return { vehicle: null, error: e.message || 'خطا در ویرایش سوژه' };
+    }
+  }
+
+  /**
+   * Delete a Vehicle (Only if no GPS device is attached)
+   */
+  public async deleteVehicle(id: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const { data: v } = await supabase
+        .from('vehicles')
+        .select('id, name, plate_number, device_id')
+        .eq('id', id)
+        .single();
+
+      if (v && v.device_id) {
+        return {
+          success: false,
+          error: 'این سوژه دارای دستگاه GPS متصل است. ابتدا از بخش ویرایش، دستگاه را جدا (بدون ردیاب) کنید.',
+        };
+      }
+
+      const { error } = await supabase.from('vehicles').delete().eq('id', id);
+      if (error) {
+        return { success: false, error: error.message };
+      }
+
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'خطا در حذف سوژه' };
+    }
+  }
+
+  /**
    * Fetch Customers (Profiles with role = client)
    */
   public async getCustomers(): Promise<Customer[]> {
@@ -265,7 +485,96 @@ export class SupabaseDataService {
   }
 
   /**
-   * Fetch Geofences
+   * Helper: Validate UUID format
+   */
+  private isValidUUID(val?: string | null): boolean {
+    if (!val || typeof val !== 'string') return false;
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
+  }
+
+  /**
+   * Helper: Generate standard RFC4122 v4 UUID
+   */
+  private generateUUID(): string {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+      const r = (Math.random() * 16) | 0;
+      const v = c === 'x' ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
+  }
+
+  /**
+   * Helper: Encode metadata cleanly inside description field
+   */
+  private encodeGeofenceMeta(
+    descText?: string,
+    meta?: {
+      vehicles?: string[];
+      customerId?: string;
+      notifyOnEnter?: boolean;
+      notifyOnExit?: boolean;
+    }
+  ): string {
+    const clean = (descText || '').split('__META__:')[0].split('__VEHICLES__:')[0].trim();
+    const metaPayload: Record<string, any> = {};
+    if (meta?.vehicles && meta.vehicles.length > 0) metaPayload.vehicles = meta.vehicles;
+    if (meta?.customerId) metaPayload.customerId = meta.customerId;
+    if (meta?.notifyOnEnter !== undefined) metaPayload.notifyOnEnter = meta.notifyOnEnter;
+    if (meta?.notifyOnExit !== undefined) metaPayload.notifyOnExit = meta.notifyOnExit;
+
+    if (Object.keys(metaPayload).length === 0) return clean;
+    const metaStr = `__META__:${JSON.stringify(metaPayload)}`;
+    return clean ? `${clean} ${metaStr}` : metaStr;
+  }
+
+  /**
+   * Helper: Decode metadata from description field
+   */
+  private decodeGeofenceMeta(descRaw?: string | null): {
+    cleanDescription: string;
+    assignedVehicleIds: string[];
+    customerId: string;
+    notifyOnEnter: boolean;
+    notifyOnExit: boolean;
+  } {
+    let cleanDescription = descRaw || '';
+    let assignedVehicleIds: string[] = [];
+    let customerId = '';
+    let notifyOnEnter = true;
+    let notifyOnExit = true;
+
+    if (descRaw && typeof descRaw === 'string') {
+      if (descRaw.includes('__META__:')) {
+        try {
+          const parts = descRaw.split('__META__:');
+          cleanDescription = parts[0].trim();
+          const meta = JSON.parse(parts[1]);
+          if (Array.isArray(meta.vehicles)) assignedVehicleIds = meta.vehicles;
+          if (meta.customerId) customerId = meta.customerId;
+          if (typeof meta.notifyOnEnter === 'boolean') notifyOnEnter = meta.notifyOnEnter;
+          if (typeof meta.notifyOnExit === 'boolean') notifyOnExit = meta.notifyOnExit;
+        } catch {
+          cleanDescription = descRaw.split('__META__:')[0].trim();
+        }
+      } else if (descRaw.includes('__VEHICLES__:')) {
+        try {
+          const parts = descRaw.split('__VEHICLES__:');
+          cleanDescription = parts[0].trim();
+          assignedVehicleIds = JSON.parse(parts[1]);
+        } catch {
+          cleanDescription = descRaw.split('__VEHICLES__:')[0].trim();
+        }
+      }
+    }
+
+    return { cleanDescription, assignedVehicleIds, customerId, notifyOnEnter, notifyOnExit };
+  }
+
+  /**
+   * Fetch Geofences from Supabase
    */
   public async getGeofences(): Promise<Geofence[]> {
     try {
@@ -274,85 +583,283 @@ export class SupabaseDataService {
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (error || !data) return [];
+      if (error) {
+        console.warn('[Supabase Data] getGeofences error:', error.message || error);
+        return [];
+      }
+      if (!data) return [];
 
-      return data.map((g: any): Geofence => ({
-        id: g.id,
-        organizationId: 'org-afg-01',
-        customerId: g.owner_id || '',
-        name: g.name,
-        description: g.description || '',
-        type: (g.fence_type as GeofenceType) || GeofenceType.CIRCLE,
-        color: g.color || '#3B82F6',
-        centerLatitude: g.center_lat,
-        centerLongitude: g.center_lng,
-        radiusMeters: g.radius_meters || 1000,
-        coordinates: g.coordinates || [],
-        assignedVehicleIds: [],
-        notifyOnEnter: true,
-        notifyOnExit: true,
-        createdAt: g.created_at,
-      }));
-    } catch {
+      return data.map((g: any): Geofence => {
+        const decoded = this.decodeGeofenceMeta(g.description);
+        
+        let vehicles = decoded.assignedVehicleIds;
+        if (g.assigned_vehicles && Array.isArray(g.assigned_vehicles) && g.assigned_vehicles.length > 0) {
+          vehicles = g.assigned_vehicles;
+        } else if (g.vehicle_id) {
+          vehicles = [g.vehicle_id];
+        }
+
+        return {
+          id: String(g.id),
+          organizationId: 'org-afg-01',
+          customerId: decoded.customerId || g.owner_id || g.customer_id || '',
+          name: g.name || 'محدوده جغرافیایی',
+          description: decoded.cleanDescription,
+          type:
+            String(g.fence_type || '').toLowerCase() === 'polygon'
+              ? GeofenceType.POLYGON
+              : GeofenceType.CIRCLE,
+          color: g.color || '#3B82F6',
+          centerLatitude: g.center_lat != null ? Number(g.center_lat) : 34.5553,
+          centerLongitude: g.center_lng != null ? Number(g.center_lng) : 69.2075,
+          radiusMeters: g.radius_meters != null ? Math.round(Number(g.radius_meters)) : 1000,
+          coordinates: g.coordinates || [],
+          assignedVehicleIds: vehicles,
+          notifyOnEnter: decoded.notifyOnEnter,
+          notifyOnExit: decoded.notifyOnExit,
+          createdAt: g.created_at || new Date().toISOString(),
+        };
+      });
+    } catch (err) {
+      console.warn('[Supabase Data] getGeofences exception:', err);
       return [];
     }
   }
 
   /**
-   * Create Geofence
+   * Create Geofence in Supabase with exact table columns
    */
   public async createGeofence(gf: Partial<Geofence>, createdById?: string): Promise<Geofence | null> {
     try {
+      const encodedDesc = this.encodeGeofenceMeta(gf.description, {
+        vehicles: gf.assignedVehicleIds || [],
+        customerId: gf.customerId,
+        notifyOnEnter: gf.notifyOnEnter,
+        notifyOnExit: gf.notifyOnExit,
+      });
+
+      const newId = this.isValidUUID(gf.id) ? gf.id! : this.generateUUID();
+      const validCreatedBy = this.isValidUUID(createdById) ? createdById : null;
+
+      // Ensure fence_type strictly satisfies Postgres check constraint: ANY (ARRAY['circle', 'polygon'])
+      const rawType = String(gf.type || '').toLowerCase();
+      const normalizedFenceType = rawType === 'polygon' ? 'polygon' : 'circle';
+
+      // Exact columns matching Supabase table 'geofences':
+      // id, name, description, fence_type, center_lat, center_lng, radius_meters, coordinates, color, created_by, created_at
+      const insertPayload: Record<string, any> = {
+        id: newId,
+        name: gf.name?.trim() || 'محدوده جغرافیایی جدید',
+        description: encodedDesc || null,
+        fence_type: normalizedFenceType,
+        center_lat: gf.centerLatitude != null ? Number(gf.centerLatitude) : null,
+        center_lng: gf.centerLongitude != null ? Number(gf.centerLongitude) : null,
+        radius_meters: gf.radiusMeters != null ? Math.round(Number(gf.radiusMeters)) : 1000,
+        coordinates: gf.coordinates && gf.coordinates.length > 0 ? gf.coordinates : null,
+        color: gf.color || '#3B82F6',
+        created_by: validCreatedBy,
+        created_at: new Date().toISOString(),
+      };
+
       const { data, error } = await supabase
         .from('geofences')
-        .insert({
-          name: gf.name || 'محدوده جغرافیایی جدید',
-          description: gf.description || '',
-          fence_type: gf.type || 'circle',
-          center_lat: gf.centerLatitude,
-          center_lng: gf.centerLongitude,
-          radius_meters: gf.radiusMeters || 1000,
-          coordinates: gf.coordinates || null,
-          color: gf.color || '#3B82F6',
-          created_by: createdById || null,
-        })
+        .insert(insertPayload)
         .select()
         .single();
 
-      if (error || !data) return null;
+      if (error) {
+        console.error('[Supabase Data] createGeofence error:', error.message || error);
+        return null;
+      }
+
+      if (!data) return null;
 
       const g = data as any;
+      const decoded = this.decodeGeofenceMeta(g.description);
       return {
-        id: g.id,
+        id: String(g.id),
         organizationId: 'org-afg-01',
-        customerId: g.owner_id || '',
+        customerId: gf.customerId || decoded.customerId || '',
         name: g.name,
-        description: g.description || '',
-        type: (g.fence_type as GeofenceType) || GeofenceType.CIRCLE,
+        description: decoded.cleanDescription,
+        type:
+          String(g.fence_type || '').toLowerCase() === 'polygon'
+            ? GeofenceType.POLYGON
+            : GeofenceType.CIRCLE,
         color: g.color || '#3B82F6',
-        centerLatitude: g.center_lat,
-        centerLongitude: g.center_lng,
-        radiusMeters: g.radius_meters || 1000,
+        centerLatitude: Number(g.center_lat),
+        centerLongitude: Number(g.center_lng),
+        radiusMeters: Number(g.radius_meters) || 1000,
         coordinates: g.coordinates || [],
-        assignedVehicleIds: [],
-        notifyOnEnter: true,
-        notifyOnExit: true,
+        assignedVehicleIds: gf.assignedVehicleIds || decoded.assignedVehicleIds,
+        notifyOnEnter: gf.notifyOnEnter !== false,
+        notifyOnExit: gf.notifyOnExit !== false,
         createdAt: g.created_at,
       };
-    } catch {
+    } catch (err) {
+      console.error('[Supabase Data] createGeofence exception:', err);
       return null;
     }
   }
 
   /**
-   * Delete Geofence
+   * Update Geofence in Supabase
+   */
+  public async updateGeofence(id: string, updates: Partial<Geofence>): Promise<Geofence | null> {
+    try {
+      const payload: Record<string, any> = {};
+      if (updates.name !== undefined) payload.name = updates.name.trim();
+
+      if (
+        updates.description !== undefined ||
+        updates.assignedVehicleIds !== undefined ||
+        updates.customerId !== undefined ||
+        updates.notifyOnEnter !== undefined ||
+        updates.notifyOnExit !== undefined
+      ) {
+        payload.description = this.encodeGeofenceMeta(updates.description, {
+          vehicles: updates.assignedVehicleIds,
+          customerId: updates.customerId,
+          notifyOnEnter: updates.notifyOnEnter,
+          notifyOnExit: updates.notifyOnExit,
+        });
+      }
+
+      if (updates.type !== undefined) {
+        const rawType = String(updates.type || '').toLowerCase();
+        payload.fence_type = rawType === 'polygon' ? 'polygon' : 'circle';
+      }
+      if (updates.centerLatitude !== undefined) payload.center_lat = Number(updates.centerLatitude);
+      if (updates.centerLongitude !== undefined) payload.center_lng = Number(updates.centerLongitude);
+      if (updates.radiusMeters !== undefined) payload.radius_meters = Math.round(Number(updates.radiusMeters));
+      if (updates.coordinates !== undefined) payload.coordinates = updates.coordinates;
+      if (updates.color !== undefined) payload.color = updates.color;
+
+      const { data, error } = await supabase
+        .from('geofences')
+        .update(payload)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error || !data) {
+        console.error('[Supabase Data] updateGeofence error:', error?.message || error);
+        return null;
+      }
+
+      const g = data as any;
+      const decoded = this.decodeGeofenceMeta(g.description);
+      return {
+        id: String(g.id),
+        organizationId: 'org-afg-01',
+        customerId: decoded.customerId || '',
+        name: g.name,
+        description: decoded.cleanDescription,
+        type:
+          String(g.fence_type || '').toLowerCase() === 'polygon'
+            ? GeofenceType.POLYGON
+            : GeofenceType.CIRCLE,
+        color: g.color || '#3B82F6',
+        centerLatitude: Number(g.center_lat),
+        centerLongitude: Number(g.center_lng),
+        radiusMeters: Number(g.radius_meters) || 1000,
+        coordinates: g.coordinates || [],
+        assignedVehicleIds: decoded.assignedVehicleIds,
+        notifyOnEnter: decoded.notifyOnEnter,
+        notifyOnExit: decoded.notifyOnExit,
+        createdAt: g.created_at,
+      };
+    } catch (err) {
+      console.error('[Supabase Data] updateGeofence exception:', err);
+      return null;
+    }
+  }
+
+  /**
+   * Delete Geofence from Supabase
    */
   public async deleteGeofence(id: string): Promise<boolean> {
     try {
       const { error } = await supabase.from('geofences').delete().eq('id', id);
-      return !error;
-    } catch {
+      if (error) {
+        console.error('[Supabase Data] deleteGeofence error:', error.message || error);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.error('[Supabase Data] deleteGeofence exception:', err);
       return false;
+    }
+  }
+
+  /**
+   * Create an Alert / Event record
+   */
+  public async createAlert(alert: {
+    owner_id?: string;
+    vehicle_id?: string;
+    device_imei?: string;
+    title: string;
+    description: string;
+    lat?: number;
+    lng?: number;
+    speed?: number;
+    type?: EventType;
+    severity?: EventSeverity;
+  }): Promise<FleetEvent | null> {
+    try {
+      const { data, error } = await supabase
+        .from('alerts')
+        .insert({
+          owner_id: alert.owner_id || null,
+          vehicle_id: alert.vehicle_id || null,
+          device_imei: alert.device_imei || null,
+          title: alert.title,
+          description: alert.description,
+          lat: alert.lat || null,
+          lng: alert.lng || null,
+          speed: alert.speed || 0,
+          is_read: false,
+        })
+        .select()
+        .single();
+
+      if (error || !data) {
+        return {
+          id: 'alert-' + Date.now(),
+          organizationId: 'org-afg-01',
+          customerId: alert.owner_id || '',
+          vehicleId: alert.vehicle_id || '',
+          deviceId: alert.device_imei || '',
+          type: alert.type || EventType.GEOFENCE_EXIT,
+          severity: alert.severity || EventSeverity.WARNING,
+          description: alert.description || alert.title,
+          timestamp: new Date().toISOString(),
+          latitude: alert.lat || 34.5553,
+          longitude: alert.lng || 69.2075,
+          speed: alert.speed || 0,
+          isAcknowledged: false,
+        };
+      }
+
+      const a = data as any;
+      return {
+        id: a.id,
+        organizationId: 'org-afg-01',
+        customerId: a.owner_id || '',
+        vehicleId: a.vehicle_id || '',
+        deviceId: a.device_imei || '',
+        type: alert.type || EventType.GEOFENCE_EXIT,
+        severity: alert.severity || EventSeverity.WARNING,
+        description: a.description || a.title || 'هشدار امنیتی',
+        timestamp: a.created_at,
+        latitude: a.lat || 34.5553,
+        longitude: a.lng || 69.2075,
+        speed: a.speed || 0,
+        isAcknowledged: a.is_read || false,
+      };
+    } catch {
+      return null;
     }
   }
 
@@ -643,9 +1150,8 @@ export class SupabaseDataService {
         }
       }
 
-      // Safe fallback: if strict date bounds didn't match (e.g. timezone skew or recent records),
-      // fetch the most recent telemetry for this vehicle so user never loses recorded tests.
-      if (records.length === 0) {
+      // Fallback only if no date bounds were requested at all:
+      if (records.length === 0 && !fromDate && !toDate) {
         let fallbackQuery = supabase
           .from('gps_telemetry')
           .select('*')

@@ -52,4 +52,9 @@
   background: #ffffff !important;
 }
 
+.leaflet-div-icon {
+  background: transparent !important;
+  border: none !important;
+}
+
 

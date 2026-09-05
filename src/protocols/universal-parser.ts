@@ -32,7 +32,24 @@ export class UniversalParser {
       return this.parseGt06(rawBuf);
     }
 
-    // 2. Check Teltonika (0x00 0x00 0x00 0x00 followed by data length)
+    // 2. Check Teltonika IMEI Login Handshake (2 bytes length + ASCII IMEI, e.g. 15 digits)
+    if (rawBuf.length >= 17 && rawBuf.length <= 19) {
+      const imeiLen = rawBuf.readUInt16BE(0);
+      if (imeiLen === rawBuf.length - 2) {
+        const imeiStr = rawBuf.slice(2).toString('ascii');
+        if (/^\d{15,17}$/.test(imeiStr)) {
+          return {
+            success: true,
+            protocol: 'TELTONIKA',
+            imei: imeiStr,
+            isLogin: true,
+            ackBuffer: Buffer.from([0x01]), // 0x01 confirms IMEI acceptance to FMC920
+          };
+        }
+      }
+    }
+
+    // 3. Check Teltonika AVL Data (0x00 0x00 0x00 0x00 followed by data length)
     if (rawBuf.length >= 8 && rawBuf.readUInt32BE(0) === 0x00000000) {
       return this.parseTeltonika(rawBuf);
     }
@@ -165,14 +182,14 @@ export class UniversalParser {
     }
   }
 
-  // --- Teltonika Codec 8 Parser ---
+  // --- Teltonika Codec 8 / Codec 8 Extended Parser ---
   private static parseTeltonika(buf: Buffer): ParseResult {
     try {
       const dataLength = buf.readUInt32BE(4);
       const codecId = buf[8];
       const count = buf[9];
 
-      if (codecId === 0x08 && count > 0) {
+      if ((codecId === 0x08 || codecId === 0x8e) && count > 0) {
         // Read first AVL Record
         let offset = 10;
         const timestampMs = Number(buf.readBigUInt64BE(offset));
@@ -188,9 +205,62 @@ export class UniversalParser {
         offset += 2;
         const satellites = buf[offset++];
         const speed = buf.readUInt16BE(offset);
+        offset += 2;
 
         const lat = latRaw / 10000000.0;
         const lng = lngRaw / 10000000.0;
+
+        // Parse IO Elements (Ignition, Power, Battery, etc.)
+        let ignition = speed > 0;
+        let extVoltage = 12.6;
+        let battVoltage = 4.1;
+        let battLevel = 98;
+
+        if (offset < buf.length - 5) {
+          const eventIoId = buf[offset++];
+          const totalIoCount = buf[offset++];
+
+          // 1-byte elements
+          if (offset < buf.length) {
+            const n1 = buf[offset++];
+            for (let i = 0; i < n1 && offset + 2 <= buf.length; i++) {
+              const id = buf[offset++];
+              const val = buf[offset++];
+              if (id === 239 || id === 1) ignition = val === 1;
+              if (id === 113) battLevel = val;
+            }
+          }
+
+          // 2-byte elements
+          if (offset < buf.length) {
+            const n2 = buf[offset++];
+            for (let i = 0; i < n2 && offset + 3 <= buf.length; i++) {
+              const id = buf[offset++];
+              const val = buf.readUInt16BE(offset);
+              offset += 2;
+              if (id === 66) extVoltage = parseFloat((val / 1000.0).toFixed(2));
+              if (id === 67) battVoltage = parseFloat((val / 1000.0).toFixed(2));
+            }
+          }
+
+          // 4-byte elements
+          if (offset < buf.length) {
+            const n4 = buf[offset++];
+            for (let i = 0; i < n4 && offset + 5 <= buf.length; i++) {
+              const id = buf[offset++];
+              offset += 4;
+            }
+          }
+
+          // 8-byte elements
+          if (offset < buf.length) {
+            const n8 = buf[offset++];
+            for (let i = 0; i < n8 && offset + 9 <= buf.length; i++) {
+              const id = buf[offset++];
+              offset += 8;
+            }
+          }
+        }
 
         // Teltonika ACK: Return 4 bytes big-endian number of accepted records
         const ack = Buffer.alloc(4);
@@ -204,11 +274,11 @@ export class UniversalParser {
           heading: angle,
           altitude: altitude,
           satellites: satellites,
-          ignition: speed > 0,
-          battery_level: 98,
-          external_power_voltage: 14.1,
+          ignition: ignition,
+          battery_level: battLevel,
+          external_power_voltage: extVoltage,
           protocol: 'TELTONIKA',
-          recorded_at: new Date(timestampMs).toISOString(),
+          recorded_at: new Date(timestampMs > 0 ? timestampMs : Date.now()).toISOString(),
         };
 
         return {

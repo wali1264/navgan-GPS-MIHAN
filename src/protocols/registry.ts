@@ -78,6 +78,7 @@ import { Tk103Decoder } from './tk103/decoder.js';
 import { Gps103Decoder } from './gps103/decoder.js';
 import { EelinkDecoder } from './eelink/decoder.js';
 import { CustomJsonDecoder } from './custom/decoder.js';
+import { TeltonikaDecoder } from './teltonika/decoder.js';
 
 export const globalProtocolRegistry = new ProtocolRegistry();
 
@@ -87,4 +88,5 @@ globalProtocolRegistry.register(new Tk103Decoder());
 globalProtocolRegistry.register(new Gps103Decoder());
 globalProtocolRegistry.register(new EelinkDecoder());
 globalProtocolRegistry.register(new CustomJsonDecoder());
+globalProtocolRegistry.register(new TeltonikaDecoder());
 

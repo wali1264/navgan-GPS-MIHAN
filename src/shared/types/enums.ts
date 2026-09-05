@@ -79,6 +79,7 @@ export enum ProtocolType {
   GPS103 = 'GPS103',
   EELINK = 'EELINK',
   CUSTOM_JSON = 'CUSTOM_JSON',
+  TELTONIKA = 'TELTONIKA',
   UNKNOWN = 'UNKNOWN',
 }
 

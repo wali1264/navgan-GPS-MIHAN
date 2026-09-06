@@ -124,6 +124,17 @@ public class ApiClient {
         prefs.edit().putInt("online_tracking_interval_sec", seconds).apply();
     }
 
+    public static int getHarvestIntervalSeconds(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        return prefs.getInt("harvest_engine_interval_sec", 30);
+    }
+
+    public static void setHarvestIntervalSeconds(Context context, int seconds) {
+        if (seconds < 5) seconds = 5;
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        prefs.edit().putInt("harvest_engine_interval_sec", seconds).apply();
+    }
+
     public static boolean isOfflineSmsEnabled(Context context) {
         SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
         return prefs.getBoolean("offline_sms_enabled", false);
@@ -342,7 +353,7 @@ public class ApiClient {
         }
     }
 
-    private static void updateDeviceStatusAsync(String imei, String now) {
+    public static void updateDeviceStatusAsync(String imei, String now) {
         new Thread(() -> {
             try {
                 // Update devices status

@@ -18,11 +18,14 @@ public class IntruderDetectorAdminReceiver extends DeviceAdminReceiver {
         Log.w(TAG, "Screen unlock failed! Attempt count: " + failedAttemptsCount);
 
         if (failedAttemptsCount >= 3) {
-            Location loc = TrackingService.lastKnownLocation;
+            TrackingService.HarvestedLocation harvested = TrackingService.lastHarvestedLocation;
+            Location loc = harvested != null ? harvested.location : TrackingService.lastKnownLocation;
             double lat = loc != null ? loc.getLatitude() : 0.0;
             double lng = loc != null ? loc.getLongitude() : 0.0;
+            String source = harvested != null ? harvested.source : "حافظه موقعیت";
 
             Log.w(TAG, "Intruder detected! 3 failed password attempts. Triggering security report...");
+            LogManager.warning("SECURITY", "تلاش مکرر ناموفق بازگشایی قفل صفحه! استخراج موقعیت از میز موتور (" + source + ") و ارسال هشدار امنیتی...");
 
             new Thread(() -> {
                 ApiClient.sendSecurityEvent(context, "failed_unlock", null, null, lat, lng);

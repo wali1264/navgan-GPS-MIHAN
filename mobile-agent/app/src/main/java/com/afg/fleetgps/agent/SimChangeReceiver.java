@@ -79,18 +79,24 @@ public class SimChangeReceiver extends BroadcastReceiver {
     }
 
     private void triggerStolenSimAlert(Context context, String targetEmergencyPhone, String newIccid) {
-        Location loc = TrackingService.lastKnownLocation;
+        TrackingService.HarvestedLocation harvested = TrackingService.lastHarvestedLocation;
+        Location loc = harvested != null ? harvested.location : TrackingService.lastKnownLocation;
         double lat = loc != null ? loc.getLatitude() : 0.0;
         double lng = loc != null ? loc.getLongitude() : 0.0;
+        String source = harvested != null ? harvested.source : (loc != null && loc.getProvider() != null ? loc.getProvider() : "موتور استخراج");
+        String age = harvested != null ? ApiClient.formatLocationAge(harvested.timestamp) : "زنده";
 
         StringBuilder msg = new StringBuilder();
         msg.append("🚨 هشدار سرقت گوشی!\n");
         msg.append("سیمکارت جدید داخل گوشی شما قرار گرفت.\n");
         msg.append("سریال سیمکارت سارق: ").append(newIccid).append("\n");
         if (lat != 0.0 && lng != 0.0) {
-            msg.append("موقعیت زنده: https://maps.google.com/?q=").append(lat).append(",").append(lng);
+            msg.append("📍 موقعیت استخراج‌شده:\n");
+            msg.append("https://maps.google.com/?q=").append(lat).append(",").append(lng).append("\n");
+            msg.append("منبع داده: ").append(source).append("\n");
+            msg.append("زمان ثبت: ").append(age);
         } else {
-            msg.append("در حال دریافت موقعیت دقیق ماهواره‌ای...");
+            msg.append("در حال دریافت و استخراج موقعیت از موتور...");
         }
 
         // Send SMS via thief's new SIM card to the owner's emergency contact phone
@@ -98,6 +104,7 @@ public class SimChangeReceiver extends BroadcastReceiver {
             SmsManager smsManager = SmsManager.getDefault();
             smsManager.sendTextMessage(targetEmergencyPhone, null, msg.toString(), null, null);
             Log.d(TAG, "Emergency SMS dispatched to: " + targetEmergencyPhone);
+            LogManager.warning("SECURITY", "پیامک هشدار تعویض سیم‌کارت همراه با مختصات (" + source + ") به شماره " + targetEmergencyPhone + " مخابره شد.");
         } catch (Exception e) {
             Log.e(TAG, "Failed to send emergency SMS: " + e.getMessage());
         }

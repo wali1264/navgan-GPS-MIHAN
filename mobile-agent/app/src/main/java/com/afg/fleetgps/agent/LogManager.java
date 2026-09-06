@@ -109,10 +109,22 @@ public class LogManager {
     }
 
     public static String getAllLogsAsText() {
+        return getFilteredLogsAsText("ALL");
+    }
+
+    public static String getFilteredLogsAsText(String category) {
         StringBuilder sb = new StringBuilder();
         synchronized (logs) {
             for (LogEntry e : logs) {
-                sb.append(e.formatLine()).append("\n");
+                if (category == null || category.equalsIgnoreCase("ALL")) {
+                    sb.append(e.formatLine()).append("\n");
+                } else if (category.equalsIgnoreCase("LOCATION") &&
+                        (e.tag.equalsIgnoreCase("GPS") || e.tag.equalsIgnoreCase("LOCATION") || e.tag.equalsIgnoreCase("HEARTBEAT"))) {
+                    sb.append(e.formatLine()).append("\n");
+                } else if (category.equalsIgnoreCase("NETWORK") &&
+                        (e.tag.equalsIgnoreCase("SUPABASE") || e.tag.equalsIgnoreCase("NETWORK") || e.tag.equalsIgnoreCase("CONFIG") || e.tag.equalsIgnoreCase("TEST"))) {
+                    sb.append(e.formatLine()).append("\n");
+                }
             }
         }
         return sb.toString();

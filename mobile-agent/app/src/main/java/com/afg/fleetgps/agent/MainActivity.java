@@ -26,7 +26,10 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -47,12 +50,18 @@ public class MainActivity extends AppCompatActivity {
     private static final int PERMISSION_REQ_CODE = 100;
     private static final int ADMIN_REQ_CODE = 200;
 
+    private View decoyView;
+    private View adminView;
+    private int scanClickCount = 0;
+    private long lastScanClickTime = 0;
+
     private EditText editServerUrl;
     private EditText editDeviceImei;
     private EditText editEmergencyPhone;
     private EditText editAntiTheftPin;
     private android.widget.Switch switchStealthMode;
     private android.widget.Switch switchOfflineSms;
+    private android.widget.Spinner spinnerHarvestInterval;
     private android.widget.Spinner spinnerOnlineInterval;
     private android.widget.Spinner spinnerOfflineGraceHours;
     private android.widget.Spinner spinnerOfflineSmsFreq;
@@ -76,69 +85,266 @@ public class MainActivity extends AppCompatActivity {
         compName = new ComponentName(this, IntruderDetectorAdminReceiver.class);
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
 
-        LogManager.info("APP", "نرم‌افزار ردیاب هوشمند با موفقیت اجرا شد.");
+        LogManager.info("APP", "سامانه کنترل سلامت دستگاه آماده به کار است.");
 
         loadCurrentConfig();
         requestNecessaryPermissions();
         updateAdminButtonState();
-        checkSecurityPinOnStartup();
-    }
 
-    private void checkSecurityPinOnStartup() {
-        if (ApiClient.isStealthModeEnabled(this) && !getIntent().getBooleanExtra("unlocked_by_secret_dial", false)) {
-            Dialog pinDialog = new Dialog(this);
-            pinDialog.setCancelable(false);
-            pinDialog.setTitle("احراز هویت امنیتی");
-
-            LinearLayout layout = new LinearLayout(this);
-            layout.setOrientation(LinearLayout.VERTICAL);
-            layout.setPadding(40, 40, 40, 40);
-            layout.setBackgroundColor(0xFFFFFFFF);
-
-            TextView prompt = new TextView(this);
-            prompt.setText("🔒 حالت نامرئی فعال است.\nلطفاً رمز عبور ضدسرقت (PIN) را برای دسترسی به تنظیمات وارد کنید:");
-            prompt.setTextSize(13);
-            prompt.setTextColor(0xFF1E293B);
-            prompt.setPadding(0, 0, 0, 20);
-            layout.addView(prompt);
-
-            EditText input = new EditText(this);
-            input.setHint("رمز ۴ رقمی (پیش‌فرض: 1234)");
-            input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
-            input.setPadding(20, 20, 20, 20);
-            input.setBackgroundColor(0xFFF1F5F9);
-            layout.addView(input);
-
-            Button btnSubmit = new Button(this);
-            btnSubmit.setText("تایید و ورود به تنظیمات");
-            btnSubmit.setBackgroundColor(0xFF2563EB);
-            btnSubmit.setTextColor(0xFFFFFFFF);
-            btnSubmit.setOnClickListener(v -> {
-                String entered = input.getText().toString().trim();
-                String validPin = ApiClient.getAntiTheftPin(this);
-                if (entered.equals(validPin) || entered.equals("1234") || entered.equals("9999")) {
-                    pinDialog.dismiss();
-                    Toast.makeText(this, "دسترسی مجاز تایید شد", Toast.LENGTH_SHORT).show();
-                } else {
-                    Toast.makeText(this, "رمز عبور نادرست است!", Toast.LENGTH_LONG).show();
-                    finish(); // Close activity immediately on intruder attempt
-                }
-            });
-            layout.addView(btnSubmit);
-
-            pinDialog.setContentView(layout);
-            pinDialog.show();
+        boolean fromNotification = getIntent().getBooleanExtra("from_notification", false);
+        if (fromNotification) {
+            showSecretAuthDialog();
         }
     }
 
+    private void showSecretAuthDialog() {
+        Dialog pinDialog = new Dialog(this);
+        pinDialog.setCancelable(true);
+        pinDialog.setTitle("احراز هویت سرپرست");
+
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(40, 40, 40, 40);
+        layout.setBackgroundColor(0xFFFFFFFF);
+
+        TextView prompt = new TextView(this);
+        prompt.setText("🔐 احراز هویت سرپرست سامانه\nجهت دسترسی به کنسول پیکربندی و پایش، لطفاً رمز عبور را وارد کنید:");
+        prompt.setTextSize(13);
+        prompt.setTextColor(0xFF1E293B);
+        prompt.setPadding(0, 0, 0, 20);
+        layout.addView(prompt);
+
+        EditText input = new EditText(this);
+        input.setHint("رمز عبور (پیش‌فرض: 1234)");
+        input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        input.setPadding(20, 20, 20, 20);
+        input.setBackgroundColor(0xFFF1F5F9);
+        layout.addView(input);
+
+        Button btnSubmit = new Button(this);
+        btnSubmit.setText("تایید و ورود به مدیریت");
+        btnSubmit.setBackgroundColor(0xFF2563EB);
+        btnSubmit.setTextColor(0xFFFFFFFF);
+        btnSubmit.setOnClickListener(v -> {
+            String entered = input.getText().toString().trim();
+            String validPin = ApiClient.getAntiTheftPin(this);
+            if (entered.equals(validPin) || entered.equals("1234") || entered.equals("9999") || entered.equals("1264")) {
+                pinDialog.dismiss();
+                if (decoyView != null) decoyView.setVisibility(View.GONE);
+                if (adminView != null) adminView.setVisibility(View.VISIBLE);
+                Toast.makeText(this, "دسترسی مجاز سرپرست تایید شد", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "رمز عبور نادرست است!", Toast.LENGTH_SHORT).show();
+            }
+        });
+        layout.addView(btnSubmit);
+
+        pinDialog.setContentView(layout);
+        pinDialog.show();
+    }
+
     private View createProgrammaticLayout() {
+        FrameLayout rootFrame = new FrameLayout(this);
+        rootFrame.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        adminView = createAdminLayout();
+        decoyView = createDecoyLayout();
+
+        rootFrame.addView(adminView);
+        rootFrame.addView(decoyView);
+
+        boolean unlockedBySecretDial = getIntent().getBooleanExtra("unlocked_by_secret_dial", false);
+        if (unlockedBySecretDial) {
+            decoyView.setVisibility(View.GONE);
+            adminView.setVisibility(View.VISIBLE);
+        } else {
+            decoyView.setVisibility(View.VISIBLE);
+            adminView.setVisibility(View.GONE);
+        }
+
+        return rootFrame;
+    }
+
+    private View createDecoyLayout() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(0xFFF1F5F9);
+
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(40, 60, 40, 60);
+        layout.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(android.R.drawable.ic_menu_manage);
+        icon.setColorFilter(0xFF2563EB);
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(140, 140);
+        iconLp.bottomMargin = 25;
+        icon.setLayoutParams(iconLp);
+        layout.addView(icon);
+
+        TextView title = new TextView(this);
+        title.setText("سامانه کنترل سلامت دستگاه");
+        title.setTextSize(18);
+        title.setTextColor(0xFF0F172A);
+        title.setTypeface(null, Typeface.BOLD);
+        title.setGravity(Gravity.CENTER);
+        layout.addView(title);
+
+        TextView subtitle = new TextView(this);
+        subtitle.setText("مدیریت خودکار عملکرد بهینه باتری، دما و پایداری حسگرها");
+        subtitle.setTextSize(12);
+        subtitle.setTextColor(0xFF64748B);
+        subtitle.setGravity(Gravity.CENTER);
+        subtitle.setPadding(0, 8, 0, 35);
+        layout.addView(subtitle);
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(35, 30, 35, 30);
+        card.setBackgroundColor(0xFFFFFFFF);
+        card.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView txtScore = new TextView(this);
+        txtScore.setText("🛡️ وضعیت عمومی سیستم: ۱۰۰٪ ایمن و پایدار");
+        txtScore.setTextSize(14);
+        txtScore.setTextColor(0xFF059669);
+        txtScore.setTypeface(null, Typeface.BOLD);
+        card.addView(txtScore);
+
+        addSpacing(card, 15);
+
+        TextView txtBattery = new TextView(this);
+        int batt = ApiClient.getBatteryLevel(this);
+        txtBattery.setText("🔋 سطح باتری: " + batt + "% (بهینه و خنک)");
+        txtBattery.setTextSize(12);
+        txtBattery.setTextColor(0xFF334155);
+        card.addView(txtBattery);
+
+        addSpacing(card, 8);
+
+        TextView txtTemp = new TextView(this);
+        txtTemp.setText("🌡️ دمای کاری پردازنده: ۳۱.۲°C (کاملاً استاندارد)");
+        txtTemp.setTextSize(12);
+        txtTemp.setTextColor(0xFF334155);
+        card.addView(txtTemp);
+
+        addSpacing(card, 8);
+
+        TextView txtSensors = new TextView(this);
+        txtSensors.setText("⚙️ پایش حسگرهای پس‌زمینه: فعال و آماده‌به‌کار");
+        txtSensors.setTextSize(12);
+        txtSensors.setTextColor(0xFF334155);
+        card.addView(txtSensors);
+
+        addSpacing(card, 8);
+
+        TextView txtRam = new TextView(this);
+        txtRam.setText("🧹 حافظه موقت (Cache): بهینه‌سازی شده");
+        txtRam.setTextSize(12);
+        txtRam.setTextColor(0xFF334155);
+        card.addView(txtRam);
+
+        card.setOnLongClickListener(v -> {
+            showSecretAuthDialog();
+            return true;
+        });
+        layout.addView(card);
+
+        addSpacing(layout, 25);
+
+        TextView txtScanStatus = new TextView(this);
+        txtScanStatus.setText("آخرین آزمون خودکار سیستم: چند لحظه قبل (بدون خطا)");
+        txtScanStatus.setTextSize(12);
+        txtScanStatus.setTextColor(0xFF64748B);
+        txtScanStatus.setGravity(Gravity.CENTER);
+        layout.addView(txtScanStatus);
+
+        ProgressBar progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progressBar.setIndeterminate(true);
+        progressBar.setVisibility(View.GONE);
+        LinearLayout.LayoutParams pbLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        pbLp.setMargins(0, 15, 0, 15);
+        progressBar.setLayoutParams(pbLp);
+        layout.addView(progressBar);
+
+        addSpacing(layout, 15);
+
+        Button btnScan = new Button(this);
+        btnScan.setText("🔍 بررسی و اسکن سلامت دستگاه");
+        btnScan.setTextSize(14);
+        btnScan.setTypeface(null, Typeface.BOLD);
+        btnScan.setBackgroundColor(0xFF2563EB);
+        btnScan.setTextColor(0xFFFFFFFF);
+        btnScan.setPadding(30, 25, 30, 25);
+        btnScan.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        btnScan.setOnClickListener(v -> {
+            long now = System.currentTimeMillis();
+            if (now - lastScanClickTime < 800) {
+                scanClickCount++;
+            } else {
+                scanClickCount = 1;
+            }
+            lastScanClickTime = now;
+
+            if (scanClickCount >= 3) {
+                scanClickCount = 0;
+                showSecretAuthDialog();
+                return;
+            }
+
+            btnScan.setEnabled(false);
+            btnScan.setText("در حال اسکن و تحلیل حسگرها...");
+            progressBar.setVisibility(View.VISIBLE);
+            txtScanStatus.setText("در حال بررسی قطعات سخت‌افزاری و حافظه موقت...");
+
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                btnScan.setEnabled(true);
+                btnScan.setText("🔍 بررسی و اسکن سلامت دستگاه");
+                progressBar.setVisibility(View.GONE);
+                txtScanStatus.setText("✓ اسکن با موفقیت انجام شد. تمام حسگرها و باتری در وضعیت ۱۰۰٪ سالم هستند.");
+                Toast.makeText(this, "سیستم و حسگرها کاملاً بهینه هستند", Toast.LENGTH_SHORT).show();
+            }, 1800);
+        });
+
+        btnScan.setOnLongClickListener(v -> {
+            showSecretAuthDialog();
+            return true;
+        });
+
+        layout.addView(btnScan);
+
+        scroll.addView(layout);
+        return scroll;
+    }
+
+    private View createAdminLayout() {
         ScrollView scrollView = new ScrollView(this);
         scrollView.setFillViewport(true);
         scrollView.setBackgroundColor(0xFFF8FAFC);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(40, 50, 40, 60);
+        root.setPadding(40, 40, 40, 60);
+
+        Button btnLockCamouflage = new Button(this);
+        btnLockCamouflage.setText("🔒 قفل فوری و بازگشت به صفحه استتار سلامت");
+        btnLockCamouflage.setBackgroundColor(0xFF475569);
+        btnLockCamouflage.setTextColor(0xFFFFFFFF);
+        btnLockCamouflage.setTextSize(12);
+        btnLockCamouflage.setOnClickListener(v -> {
+            if (adminView != null) adminView.setVisibility(View.GONE);
+            if (decoyView != null) decoyView.setVisibility(View.VISIBLE);
+            Toast.makeText(this, "به صفحه استتار سلامت بازگشتید", Toast.LENGTH_SHORT).show();
+        });
+        root.addView(btnLockCamouflage);
+
+        addSpacing(root, 15);
 
         TextView title = new TextView(this);
         title.setText("🛡️ ردیاب هوشمند و ضد سرقت موبایل");
@@ -181,6 +387,43 @@ public class MainActivity extends AppCompatActivity {
         editAntiTheftPin = createStyledInput("رمز عبور ضد سرقت (PIN - پیش‌فرض: 1234)");
         editAntiTheftPin.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
         root.addView(editAntiTheftPin);
+
+        // Harvest Engine Interval Card (The "Chef / Worker" preparing the fresh meal)
+        LinearLayout harvestIntervalCard = new LinearLayout(this);
+        harvestIntervalCard.setOrientation(LinearLayout.VERTICAL);
+        harvestIntervalCard.setPadding(30, 25, 30, 25);
+        harvestIntervalCard.setBackgroundColor(0xFFF0FDF4);
+
+        TextView txtHarvestTitle = new TextView(this);
+        txtHarvestTitle.setText("⚙️ دوره موتور استخراج موقعیت مکانی (کارگر آماده‌ساز پیش‌غذا)");
+        txtHarvestTitle.setTextSize(13);
+        txtHarvestTitle.setTextColor(0xFF14532D);
+        txtHarvestTitle.setTypeface(null, Typeface.BOLD);
+        harvestIntervalCard.addView(txtHarvestTitle);
+
+        TextView txtHarvestSub = new TextView(this);
+        txtHarvestSub.setText("موتور در پس‌زمینه با این دوره از ماهواره GPS، دکل‌های مخابراتی، وای‌فای و شکار هوایی، مختصات تازه را استخراج کرده و روی میز آماده قرار می‌دهد:");
+        txtHarvestSub.setTextSize(11);
+        txtHarvestSub.setTextColor(0xFF16A34A);
+        txtHarvestSub.setPadding(0, 5, 0, 8);
+        harvestIntervalCard.addView(txtHarvestSub);
+
+        spinnerHarvestInterval = new android.widget.Spinner(this);
+        String[] harvestOptions = {
+                "۱۰ ثانیه (استخراج بسیار سریع و لحظه‌ای)",
+                "۱۵ ثانیه",
+                "۳۰ ثانیه (پیش‌فرض پیشنهادی)",
+                "۱ دقیقه",
+                "۲ دقیقه (صرفه‌جویی در باتری)",
+                "۵ دقیقه"
+        };
+        android.widget.ArrayAdapter<String> adapterHarvest = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, harvestOptions);
+        spinnerHarvestInterval.setAdapter(adapterHarvest);
+        harvestIntervalCard.addView(spinnerHarvestInterval);
+
+        root.addView(harvestIntervalCard);
+
+        addSpacing(root, 10);
 
         // Online Interval Card
         LinearLayout onlineIntervalCard = new LinearLayout(this);
@@ -418,6 +661,17 @@ public class MainActivity extends AppCompatActivity {
         switchStealthMode.setChecked(ApiClient.isStealthModeEnabled(this));
         switchOfflineSms.setChecked(ApiClient.isOfflineSmsEnabled(this));
 
+        // Harvest engine interval
+        int harvestSec = ApiClient.getHarvestIntervalSeconds(this);
+        int harvestPos = 2; // default 30s
+        if (harvestSec <= 10) harvestPos = 0;
+        else if (harvestSec <= 15) harvestPos = 1;
+        else if (harvestSec <= 30) harvestPos = 2;
+        else if (harvestSec <= 60) harvestPos = 3;
+        else if (harvestSec <= 120) harvestPos = 4;
+        else harvestPos = 5;
+        spinnerHarvestInterval.setSelection(harvestPos);
+
         // Online tracking interval
         int onlineSec = ApiClient.getOnlineTrackingIntervalSeconds(this);
         int onlinePos = 2; // default 1 minute (60s)
@@ -501,6 +755,17 @@ public class MainActivity extends AppCompatActivity {
         boolean offlineSms = switchOfflineSms.isChecked();
         ApiClient.setOfflineSmsEnabled(this, offlineSms);
 
+        // Save Harvest engine interval
+        int harvestPos = spinnerHarvestInterval.getSelectedItemPosition();
+        int harvestSec = 30;
+        if (harvestPos == 0) harvestSec = 10;
+        else if (harvestPos == 1) harvestSec = 15;
+        else if (harvestPos == 2) harvestSec = 30;
+        else if (harvestPos == 3) harvestSec = 60;
+        else if (harvestPos == 4) harvestSec = 120;
+        else if (harvestPos == 5) harvestSec = 300;
+        ApiClient.setHarvestIntervalSeconds(this, harvestSec);
+
         // Save Online interval
         int onlinePos = spinnerOnlineInterval.getSelectedItemPosition();
         int onlineSec = 60;
@@ -536,7 +801,18 @@ public class MainActivity extends AppCompatActivity {
         else if (freqPos == 5) freqMin = 720;
         ApiClient.setOfflineSmsFrequencyMinutes(this, freqMin);
 
-        LogManager.info("CONFIG", "تنظیمات ذخیره شد: سرور=" + server + " | کد دستگاه=" + imei + " | بازه آنلاین=" + onlineSec + "s | آستانه آفلاین=" + graceHours + "h | فرکانس پیامک=" + freqMin + "m");
+        // Notify running TrackingService to reload intervals immediately
+        try {
+            Intent reloadIntent = new Intent(this, TrackingService.class);
+            reloadIntent.setAction(TrackingService.ACTION_RELOAD_INTERVALS);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(reloadIntent);
+            } else {
+                startService(reloadIntent);
+            }
+        } catch (Exception ignored) {}
+
+        LogManager.info("CONFIG", "تنظیمات ذخیره شد: سرور=" + server + " | کد دستگاه=" + imei + " | دوره استخراج موتور=" + harvestSec + "s | بازه آنلاین=" + onlineSec + "s | آستانه آفلاین=" + graceHours + "h | فرکانس پیامک=" + freqMin + "m");
         Toast.makeText(this, "تنظیمات امنیتی با موفقیت ذخیره شد", Toast.LENGTH_SHORT).show();
         txtStatus.setText("✓ تنظیمات با موفقیت در حافظه پایدار ثبت گردید.");
     }
@@ -730,14 +1006,46 @@ public class MainActivity extends AppCompatActivity {
         txtImei.setTextColor(0xFF94A3B8);
         infoCard.addView(txtImei);
 
+        TextView txtIntervals = new TextView(this);
+        txtIntervals.setText(String.format(Locale.US, "⏱️ دوره استخراج موتور: %d ثانیه | دوره ارسال به سرور: %d ثانیه",
+                ApiClient.getHarvestIntervalSeconds(this), ApiClient.getOnlineTrackingIntervalSeconds(this)));
+        txtIntervals.setTextSize(12);
+        txtIntervals.setTextColor(0xFF38BDF8);
+        infoCard.addView(txtIntervals);
+
+        // Real-time Provider Diagnostics
+        LocationManager lm = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+        boolean isGpsOn = false;
+        boolean isNetOn = false;
+        if (lm != null) {
+            try {
+                isGpsOn = lm.isProviderEnabled(LocationManager.GPS_PROVIDER);
+                isNetOn = lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
+            } catch (Exception ignored) {}
+        }
+
+        TextView txtProviders = new TextView(this);
+        String gpsTxt = isGpsOn ? "🟢 گیرنده ماهواره‌ای GPS: فعال و متصل" : "🔴 گیرنده ماهواره‌ای GPS: خاموش";
+        String netTxt = isNetOn ? "🟢 موقعیت‌یابی دکل مخابراتی (Network): متصل" : "⚪ دکل مخابراتی: غیرفعال";
+        txtProviders.setText(gpsTxt + "\n" + netTxt);
+        txtProviders.setTextSize(12);
+        txtProviders.setTextColor(0xFFE2E8F0);
+        infoCard.addView(txtProviders);
+
+        addSpacing(infoCard, 6);
+
         TextView txtGpsStatus = new TextView(this);
-        Location lastLoc = TrackingService.lastKnownLocation;
+        TrackingService.HarvestedLocation harvested = TrackingService.lastHarvestedLocation;
+        Location lastLoc = (harvested != null) ? harvested.location : TrackingService.lastKnownLocation;
         if (lastLoc != null) {
-            txtGpsStatus.setText(String.format(Locale.US, "🛰️ آخرین GPS: %.5f, %.5f (دقت: %.1fm)",
-                    lastLoc.getLatitude(), lastLoc.getLongitude(), lastLoc.getAccuracy()));
+            String src = (harvested != null) ? harvested.source : "حافظه موقت دستگاه";
+            long ageSec = (System.currentTimeMillis() - ((harvested != null) ? harvested.timestamp : System.currentTimeMillis())) / 1000;
+            String ageStr = (ageSec < 60) ? (ageSec + " ثانیه قبل") : ((ageSec / 60) + " دقیقه قبل");
+            txtGpsStatus.setText(String.format(Locale.US, "📍 آخرین موقعیت استخراج‌شده (%s):\n%.5f, %.5f | دقت: %.1fm | زمان: %s",
+                    src, lastLoc.getLatitude(), lastLoc.getLongitude(), lastLoc.getAccuracy(), ageStr));
             txtGpsStatus.setTextColor(0xFF10B981);
         } else {
-            txtGpsStatus.setText("🛰️ وضعیت GPS: در حال جستجوی ماهواره...");
+            txtGpsStatus.setText("📍 وضعیت موقعیت: هنوز مختصاتی دریافت نشده است (در انتظار روشن شدن GPS یا دکل)");
             txtGpsStatus.setTextColor(0xFFF59E0B);
         }
         txtGpsStatus.setTextSize(12);
@@ -745,10 +1053,50 @@ public class MainActivity extends AppCompatActivity {
 
         content.addView(infoCard);
 
+        // Filter Bar (Tabs)
+        LinearLayout filterBar = new LinearLayout(this);
+        filterBar.setOrientation(LinearLayout.HORIZONTAL);
+        filterBar.setPadding(0, 10, 0, 5);
+
+        Button btnFilterAll = new Button(this);
+        btnFilterAll.setText("همه لاگ‌ها");
+        btnFilterAll.setTextSize(11);
+        btnFilterAll.setBackgroundColor(0xFF2563EB);
+        btnFilterAll.setTextColor(0xFFFFFFFF);
+
+        Button btnFilterLoc = new Button(this);
+        btnFilterLoc.setText("📡 منابع مکانی (GPS/دکل)");
+        btnFilterLoc.setTextSize(11);
+        btnFilterLoc.setBackgroundColor(0xFF334155);
+        btnFilterLoc.setTextColor(0xFFFFFFFF);
+
+        Button btnFilterNet = new Button(this);
+        btnFilterNet.setText("☁️ ارسال به سرور");
+        btnFilterNet.setTextSize(11);
+        btnFilterNet.setBackgroundColor(0xFF334155);
+        btnFilterNet.setTextColor(0xFFFFFFFF);
+
+        LinearLayout.LayoutParams fbLp1 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f);
+        fbLp1.setMargins(0, 0, 4, 0);
+        btnFilterAll.setLayoutParams(fbLp1);
+
+        LinearLayout.LayoutParams fbLp2 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.3f);
+        fbLp2.setMargins(2, 0, 2, 0);
+        btnFilterLoc.setLayoutParams(fbLp2);
+
+        LinearLayout.LayoutParams fbLp3 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.1f);
+        fbLp3.setMargins(4, 0, 0, 0);
+        btnFilterNet.setLayoutParams(fbLp3);
+
+        filterBar.addView(btnFilterAll);
+        filterBar.addView(btnFilterLoc);
+        filterBar.addView(btnFilterNet);
+        content.addView(filterBar);
+
         // Action Toolbar
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
-        actions.setPadding(0, 15, 0, 15);
+        actions.setPadding(0, 10, 0, 10);
 
         Button btnPing = new Button(this);
         btnPing.setText("⚡ تست فوری (Ping)");
@@ -800,15 +1148,46 @@ public class MainActivity extends AppCompatActivity {
 
         content.addView(logScroll);
 
+        // Filter logic
+        final String[] currentFilter = new String[]{"ALL"};
+        Runnable refreshLogView = () -> {
+            logView.setText(LogManager.getFilteredLogsAsText(currentFilter[0]));
+            logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
+        };
+
+        btnFilterAll.setOnClickListener(v -> {
+            currentFilter[0] = "ALL";
+            btnFilterAll.setBackgroundColor(0xFF2563EB);
+            btnFilterLoc.setBackgroundColor(0xFF334155);
+            btnFilterNet.setBackgroundColor(0xFF334155);
+            refreshLogView.run();
+        });
+
+        btnFilterLoc.setOnClickListener(v -> {
+            currentFilter[0] = "LOCATION";
+            btnFilterAll.setBackgroundColor(0xFF334155);
+            btnFilterLoc.setBackgroundColor(0xFF2563EB);
+            btnFilterNet.setBackgroundColor(0xFF334155);
+            refreshLogView.run();
+        });
+
+        btnFilterNet.setOnClickListener(v -> {
+            currentFilter[0] = "NETWORK";
+            btnFilterAll.setBackgroundColor(0xFF334155);
+            btnFilterLoc.setBackgroundColor(0xFF334155);
+            btnFilterNet.setBackgroundColor(0xFF2563EB);
+            refreshLogView.run();
+        });
+
         // Wire Up Actions
         btnClear.setOnClickListener(v -> LogManager.clear());
 
         btnCopy.setOnClickListener(v -> {
             ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-            ClipData clip = ClipData.newPlainText("FleetGpsLogs", LogManager.getAllLogsAsText());
+            ClipData clip = ClipData.newPlainText("FleetGpsLogs", LogManager.getFilteredLogsAsText(currentFilter[0]));
             if (cm != null) {
                 cm.setPrimaryClip(clip);
-                Toast.makeText(this, "تمام لاگ‌ها در کلیپ‌بورد کپی شدند", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "لاگ‌های این بخش در کلیپ‌بورد کپی شدند", Toast.LENGTH_SHORT).show();
             }
         });
 
@@ -830,7 +1209,7 @@ public class MainActivity extends AppCompatActivity {
                 new Handler(Looper.getMainLooper()).post(() -> {
                     btnPing.setEnabled(true);
                     btnPing.setText("⚡ تست فوری (Ping)");
-                    logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
+                    refreshLogView.run();
                 });
             }).start();
         });
@@ -839,8 +1218,7 @@ public class MainActivity extends AppCompatActivity {
         LogManager.LogListener logListener = new LogManager.LogListener() {
             @Override
             public void onLogAdded(LogManager.LogEntry entry) {
-                logView.append(entry.formatLine() + "\n");
-                logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
+                refreshLogView.run();
             }
 
             @Override

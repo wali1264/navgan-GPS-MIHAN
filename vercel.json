@@ -1,0 +1,17 @@
+{
+  "framework": "vite",
+  "rewrites": [
+    {
+      "source": "/api/mobile/telemetry",
+      "destination": "/api/mobile/telemetry"
+    },
+    {
+      "source": "/api/:path*",
+      "destination": "/api/:path*"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

@@ -33,14 +33,18 @@ jobs:
             chmod +x gradlew
           fi
 
-      - name: Build Android Debug APK
+      - name: Build Android Debug and Signed APK
         run: |
           cd mobile-agent
-          ./gradlew assembleDebug --stacktrace
+          # Generate debug.keystore if it doesn't exist so V1+V2 signing is guaranteed
+          if [ ! -f app/debug.keystore ]; then
+            keytool -genkey -v -keystore app/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          ./gradlew assembleDebug assembleRelease --stacktrace
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: FleetGuard-Agent-APK
-          path: mobile-agent/app/build/outputs/apk/debug/*.apk
+          path: mobile-agent/app/build/outputs/apk/**/*.apk
           retention-days: 30

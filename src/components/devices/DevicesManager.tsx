@@ -5,7 +5,7 @@
 import React, { useState } from 'react';
 import { Device, Vehicle } from '../../shared/types/models';
 import { ProtocolType } from '../../shared/types/enums';
-import { Cpu, Plus, Search, CheckCircle, AlertCircle, Signal, Radio, Terminal, Edit2, Trash2, Power, PowerOff } from 'lucide-react';
+import { Cpu, Plus, Search, CheckCircle, AlertCircle, Signal, Radio, Terminal, Edit2, Trash2, Power, PowerOff, Smartphone, ShieldAlert } from 'lucide-react';
 
 interface DevicesManagerProps {
   devices: Device[];
@@ -31,6 +31,9 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({
   const [model, setModel] = useState('Concox GT06N');
   const [simNumber, setSimNumber] = useState('');
   const [simOperator, setSimOperator] = useState('Roshan');
+  const [deviceType, setDeviceType] = useState<'vehicle_tracker' | 'smartphone'>('vehicle_tracker');
+  const [emergencyContactPhone, setEmergencyContactPhone] = useState('');
+  const [antiTheftPin, setAntiTheftPin] = useState('1234');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
@@ -45,13 +48,28 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({
       (d.simNumber && d.simNumber.includes(searchTerm))
   );
 
-  const openAddModal = () => {
+  const generateSmartphoneId = () => {
+    const randomDigits = Math.floor(100000 + Math.random() * 900000);
+    setImei(`AFG-${randomDigits}`);
+  };
+
+  const openAddModal = (initialType: 'vehicle_tracker' | 'smartphone' = 'vehicle_tracker') => {
     setEditingDeviceId(null);
-    setImei('');
-    setProtocol(ProtocolType.GT06);
-    setModel('Concox GT06N');
+    setDeviceType(initialType);
+    if (initialType === 'smartphone') {
+      const randomDigits = Math.floor(100000 + Math.random() * 900000);
+      setImei(`AFG-${randomDigits}`);
+      setProtocol(ProtocolType.SMARTPHONE_AGENT);
+      setModel('گوشی هوشمند اندروید');
+    } else {
+      setImei('');
+      setProtocol(ProtocolType.GT06);
+      setModel('Concox GT06N');
+    }
     setSimNumber('');
     setSimOperator('Roshan');
+    setEmergencyContactPhone('');
+    setAntiTheftPin('1234');
     setFormError('');
     setFormSuccess('');
     setIsModalOpen(true);
@@ -64,6 +82,9 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({
     setModel(d.model);
     setSimNumber(d.simNumber || '');
     setSimOperator(d.simOperator || 'Roshan');
+    setDeviceType(d.deviceType || (d.protocol === ProtocolType.SMARTPHONE_AGENT ? 'smartphone' : 'vehicle_tracker'));
+    setEmergencyContactPhone(d.emergencyContactPhone || '');
+    setAntiTheftPin(d.antiTheftPin || '1234');
     setFormError('');
     setFormSuccess('');
     setIsModalOpen(true);
@@ -127,6 +148,9 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({
             model_name: model,
             sim_number: simNumber.trim(),
             sim_operator: simOperator,
+            device_type: deviceType,
+            emergency_contact_phone: emergencyContactPhone.trim(),
+            anti_theft_pin: antiTheftPin.trim(),
           });
 
           if (res && res.success === false) {
@@ -143,15 +167,18 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({
           model,
           simNumber: simNumber.trim(),
           simOperator,
+          deviceType,
+          emergencyContactPhone: emergencyContactPhone.trim(),
+          antiTheftPin: antiTheftPin.trim(),
           status: 'ACTIVE',
         });
 
         if (res && res.success === false) {
-          setFormError(res.error || 'خطا در ثبت دستگاه GPS');
+          setFormError(res.error || 'خطا در ثبت دستگاه');
           setIsSubmitting(false);
           return;
         }
-        setFormSuccess('دستگاه GPS با موفقیت در سامانه ثبت گردید.');
+        setFormSuccess(deviceType === 'smartphone' ? 'گوشی هوشمند با موفقیت در سامانه ثبت گردید.' : 'دستگاه ردیاب با موفقیت در سامانه ثبت گردید.');
       }
 
       setTimeout(() => {
@@ -183,13 +210,22 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({
           />
         </div>
 
-        <button
-          onClick={openAddModal}
-          className="w-full sm:w-auto px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs rounded-md shadow-xs flex items-center justify-center gap-2 transition"
-        >
-          <Plus className="w-4 h-4" />
-          <span>افزودن دستگاه ردیاب GPS جدید</span>
-        </button>
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <button
+            onClick={() => openAddModal('smartphone')}
+            className="flex-1 sm:flex-none px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs rounded-md shadow-xs flex items-center justify-center gap-1.5 transition"
+          >
+            <Smartphone className="w-4 h-4" />
+            <span>ثبت گوشی همراه جدید</span>
+          </button>
+          <button
+            onClick={() => openAddModal('vehicle_tracker')}
+            className="flex-1 sm:flex-none px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs rounded-md shadow-xs flex items-center justify-center gap-1.5 transition"
+          >
+            <Plus className="w-4 h-4" />
+            <span>افزودن ردیاب خودرو (GPS)</span>
+          </button>
+        </div>
       </div>
 
       {/* Devices Table */}
@@ -212,14 +248,30 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({
               {filteredDevices.map((d) => {
                 const assignedVehicle = vehicles.find((v) => v.deviceId === d.id || v.id === d.assignedVehicleId);
                 const isActive = d.status === 'ACTIVE';
+                const isSmartphone = d.deviceType === 'smartphone' || d.protocol === ProtocolType.SMARTPHONE_AGENT;
 
                 return (
                   <tr key={d.id} className="hover:bg-slate-50/60 transition">
-                    <td className="p-4 font-mono text-blue-600 font-bold">{d.imei}</td>
+                    <td className="p-4 font-mono font-bold">
+                      <div className="flex items-center gap-1.5">
+                        {isSmartphone ? (
+                          <Smartphone className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        ) : (
+                          <Cpu className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                        )}
+                        <span className={isSmartphone ? 'text-emerald-700' : 'text-blue-600'}>{d.imei}</span>
+                      </div>
+                    </td>
                     <td className="p-4">
-                      <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-700 font-mono text-[11px]">
-                        {d.protocol}
-                      </span>
+                      {isSmartphone ? (
+                        <span className="px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700 font-medium text-[11px] inline-flex items-center gap-1">
+                          <span>موبایل هوشمند</span>
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-700 font-mono text-[11px]">
+                          {d.protocol}
+                        </span>
+                      )}
                     </td>
                     <td className="p-4 text-slate-900 font-medium">{d.model}</td>
                     <td className="p-4">
@@ -327,11 +379,60 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({
             )}
 
             <form onSubmit={handleSave} className="space-y-3.5 text-right">
+              {/* Type Switcher */}
+              {!editingDeviceId && (
+                <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-lg text-xs font-medium">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeviceType('vehicle_tracker');
+                      setProtocol(ProtocolType.GT06);
+                      setModel('Concox GT06N');
+                      setImei('');
+                    }}
+                    className={`py-1.5 rounded-md flex items-center justify-center gap-1.5 transition ${
+                      deviceType === 'vehicle_tracker' ? 'bg-white text-blue-600 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Cpu className="w-3.5 h-3.5" />
+                    <span>ردیاب سخت‌افزاری موتر</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeviceType('smartphone');
+                      setProtocol(ProtocolType.SMARTPHONE_AGENT);
+                      setModel('گوشی هوشمند اندروید');
+                      generateSmartphoneId();
+                    }}
+                    className={`py-1.5 rounded-md flex items-center justify-center gap-1.5 transition ${
+                      deviceType === 'smartphone' ? 'bg-white text-emerald-600 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Smartphone className="w-3.5 h-3.5" />
+                    <span>گوشی همراه (موبایل)</span>
+                  </button>
+                </div>
+              )}
+
               <div>
-                <label className="block text-xs text-slate-700 font-medium mb-1">کد بین‌المللی IMEI (15 رقمی)</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs text-slate-700 font-medium">
+                    {deviceType === 'smartphone' ? 'شناسه ردیابی گوشی (IMEI / کد دستگاه)' : 'کد بین‌المللی IMEI (15 رقمی)'}
+                  </label>
+                  {deviceType === 'smartphone' && !editingDeviceId && (
+                    <button
+                      type="button"
+                      onClick={generateSmartphoneId}
+                      className="text-[11px] text-emerald-600 hover:text-emerald-700 font-medium"
+                    >
+                      تولید کد جدید
+                    </button>
+                  )}
+                </div>
                 <input
                   type="text"
-                  placeholder="مثال: 868204051189209"
+                  placeholder={deviceType === 'smartphone' ? 'مثال: AFG-892104' : 'مثال: 868204051189209'}
                   value={imei}
                   disabled={Boolean(editingDeviceId)}
                   onChange={(e) => setImei(e.target.value)}
@@ -341,30 +442,47 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({
                   required
                 />
                 {editingDeviceId && (
-                  <p className="text-[11px] text-slate-400 mt-1">کد IMEI به عنوان شناسه منحصر‌به‌فرد سخت‌افزار غیرقابل تغییر است.</p>
+                  <p className="text-[11px] text-slate-400 mt-1">شناسه دستگاه به عنوان کلید یکتا غیرقابل تغییر است.</p>
                 )}
               </div>
 
-              <div>
-                <label className="block text-xs text-slate-700 font-medium mb-1">پروتکل استاندارد دیکودر</label>
-                <select
-                  value={protocol}
-                  onChange={(e) => setProtocol(e.target.value as ProtocolType)}
-                  className="w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
-                >
-                  <option value={ProtocolType.GT06}>GT06 / Concox (بسته‌های باینری 0x78 0x78)</option>
-                  <option value={ProtocolType.TK103}>TK103 (بسته‌های متنی پرانتزی)</option>
-                  <option value={ProtocolType.GPS103}>GPS103 / Coban</option>
-                  <option value={ProtocolType.EELINK}>Eelink (بسته‌های 0x67 0x67)</option>
-                  <option value={ProtocolType.CUSTOM_JSON}>Custom JSON / Telemetry IoT</option>
-                </select>
-              </div>
+              {deviceType === 'vehicle_tracker' ? (
+                <div>
+                  <label className="block text-xs text-slate-700 font-medium mb-1">پروتکل استاندارد دیکودر</label>
+                  <select
+                    value={protocol}
+                    onChange={(e) => setProtocol(e.target.value as ProtocolType)}
+                    className="w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
+                  >
+                    <option value={ProtocolType.GT06}>GT06 / Concox (بسته‌های باینری 0x78 0x78)</option>
+                    <option value={ProtocolType.TELTONIKA}>Teltonika (بسته‌های باینری Codec 8 / FMC920 / FMB920)</option>
+                    <option value={ProtocolType.TK103}>TK103 (بسته‌های متنی پرانتزی)</option>
+                    <option value={ProtocolType.GPS103}>GPS103 / Coban</option>
+                    <option value={ProtocolType.EELINK}>Eelink (بسته‌های 0x67 0x67)</option>
+                    <option value={ProtocolType.CUSTOM_JSON}>Custom JSON / Telemetry IoT</option>
+                  </select>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs text-slate-700 font-medium mb-1">شماره تماس اضطراری (دریافت پیامک سرقت و تعویض سیمکارت)</label>
+                  <input
+                    type="text"
+                    placeholder="مثال: 0799112233"
+                    value={emergencyContactPhone}
+                    onChange={(e) => setEmergencyContactPhone(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">در صورت سرقت و تعویض سیمکارت، لوکیشن و شماره سارق به این خط ارسال می‌شود.</p>
+                </div>
+              )}
 
               <div>
-                <label className="block text-xs text-slate-700 font-medium mb-1">مدل تجارتی ردیاب</label>
+                <label className="block text-xs text-slate-700 font-medium mb-1">
+                  {deviceType === 'smartphone' ? 'مدل و نام گوشی' : 'مدل تجارتی ردیاب'}
+                </label>
                 <input
                   type="text"
-                  placeholder="مثال: Concox GT06N, Coban TK103B, Eelink TK116"
+                  placeholder={deviceType === 'smartphone' ? 'مثال: سامسونگ گلکسی A14، شیائومی نوت 12' : 'مثال: Teltonika FMC920, Concox GT06N'}
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
                   className="w-full bg-white border border-slate-200 rounded-md px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
@@ -373,7 +491,9 @@ export const DevicesManager: React.FC<DevicesManagerProps> = ({
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-xs text-slate-700 font-medium mb-1">شماره سیمکارت داخل دستگاه</label>
+                  <label className="block text-xs text-slate-700 font-medium mb-1">
+                    {deviceType === 'smartphone' ? 'شماره سیمکارت فعلی گوشی' : 'شماره سیمکارت ردیاب'}
+                  </label>
                   <input
                     type="text"
                     placeholder="+93700112233"

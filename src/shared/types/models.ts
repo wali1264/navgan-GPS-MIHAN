@@ -81,7 +81,24 @@ export interface Device {
   packetCount: number;
   errorCount: number;
   firmwareVersion?: string;
+  deviceType?: 'vehicle_tracker' | 'smartphone';
+  emergencyContactPhone?: string;
+  simSerialIccid?: string;
+  antiTheftPin?: string;
   notes?: string;
+  createdAt: string;
+}
+
+export interface MobileSecurityEvent {
+  id: string;
+  deviceImei: string;
+  vehicleId?: string;
+  eventType: 'sim_changed' | 'failed_unlock' | 'panic_siren' | 'remote_lock' | 'battery_low';
+  photoUrl?: string;
+  newSimNumber?: string;
+  lat?: number;
+  lng?: number;
+  details?: Record<string, any>;
   createdAt: string;
 }
 

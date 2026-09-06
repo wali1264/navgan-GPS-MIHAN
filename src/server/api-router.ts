@@ -10,6 +10,8 @@ import { globalSessionManager } from '../gateway/session-manager';
 import { globalProtocolRegistry } from '../protocols/registry';
 import { globalCommandService } from '../services/command-service';
 import { UserRole, VehicleType, GeofenceType, EventType, EventSeverity, CommandType } from '../shared/types/enums';
+import { AdaptiveDbAdapter } from './adaptive-db-adapter';
+import { serverSupabase } from './supabase-admin';
 
 export const apiRouter = express.Router();
 
@@ -369,4 +371,145 @@ apiRouter.get('/audit-logs', (req: AuthenticatedRequest, res: Response) => {
   const orgId = req.user?.organizationId || 'org-afg-01';
   res.json(globalStorageRepository.getAuditLogs(orgId));
 });
+
+// --- 14. Mobile Smartphone Agent Ingestion & Security Endpoints ---
+
+// A. Telemetry ingestion from Android background service
+apiRouter.post('/mobile/telemetry', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const {
+      imei,
+      lat,
+      lng,
+      speed = 0,
+      heading = 0,
+      altitude = 0,
+      battery_level = 100,
+      gsm_signal = 100,
+      recorded_at,
+    } = req.body;
+
+    if (!imei || lat === undefined || lng === undefined) {
+      res.status(400).json({ error: 'Missing required parameters: imei, lat, lng' });
+      return;
+    }
+
+    const record = {
+      device_imei: String(imei),
+      lat: Number(lat),
+      lng: Number(lng),
+      speed: Number(speed),
+      heading: Number(heading),
+      altitude: Number(altitude),
+      battery_level: Number(battery_level),
+      gsm_signal: Number(gsm_signal),
+      ignition: true, // Smartphone is active/in hand
+      protocol: 'SMARTPHONE_AGENT',
+      recorded_at: recorded_at || new Date().toISOString(),
+    };
+
+    // Save to Database & Dispatch realtime event to all connected dashboard websockets
+    await AdaptiveDbAdapter.getInstance().saveTelemetry(record);
+
+    res.json({ success: true, timestamp: new Date().toISOString() });
+  } catch (err: any) {
+    console.error('[Mobile Telemetry API Error]:', err);
+    res.status(500).json({ error: err.message || 'Internal error' });
+  }
+});
+
+// B. Mobile Security Event (SIM changed, Intruder photo, Panic Siren)
+apiRouter.post('/mobile/security-event', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const {
+      imei,
+      vehicle_id,
+      event_type,
+      photo_url,
+      new_sim_number,
+      lat,
+      lng,
+      details,
+    } = req.body;
+
+    if (!imei || !event_type) {
+      res.status(400).json({ error: 'Missing imei or event_type' });
+      return;
+    }
+
+    // 1. Insert into mobile_security_events table in Supabase
+    const { data, error } = await serverSupabase
+      .from('mobile_security_events')
+      .insert({
+        device_imei: String(imei),
+        vehicle_id: vehicle_id || null,
+        event_type: String(event_type),
+        photo_url: photo_url || null,
+        new_sim_number: new_sim_number || null,
+        lat: lat ? Number(lat) : null,
+        lng: lng ? Number(lng) : null,
+        details: details || {},
+        created_at: new Date().toISOString(),
+      })
+      .select();
+
+    if (error) {
+      console.warn('[Mobile Security Event DB Notice]:', error.message);
+    }
+
+    // 2. Also create a high-priority alert in alerts table so dashboard raises audio/visual alert
+    let alertTitle = 'هشدار امنیتی گوشی همراه';
+    let alertDesc = `رویداد امنیتی ${event_type} برای گوشی همراه ثبت گردید.`;
+
+    if (event_type === 'sim_changed') {
+      alertTitle = '🚨 هشدار تعویض سیمکارت گوشی (خطر سرقت)';
+      alertDesc = `سیمکارت گوشی با کد ${imei} تعویض گردید! شماره سیمکارت جدید سارق: ${new_sim_number || 'نامشخص'}`;
+    } else if (event_type === 'failed_unlock') {
+      alertTitle = '📸 تلاش ناموفق برای باز کردن قفل گوشی';
+      alertDesc = `رمز عبور گوشی اشتباه وارد شد و تصویر چهره فرد ضبط گردید.`;
+    } else if (event_type === 'panic_siren') {
+      alertTitle = '🔊 فعال‌سازی آژیر اضطراری گوشی';
+      alertDesc = `فرمان آژیر خطر روی گوشی ارسال و پخش گردید.`;
+    }
+
+    await serverSupabase.from('alerts').insert({
+      device_imei: String(imei),
+      vehicle_id: vehicle_id || null,
+      alert_type: event_type,
+      title: alertTitle,
+      description: alertDesc,
+      lat: lat ? Number(lat) : null,
+      lng: lng ? Number(lng) : null,
+      created_at: new Date().toISOString(),
+    });
+
+    res.json({ success: true, event: data?.[0] || null });
+  } catch (err: any) {
+    console.error('[Mobile Security API Error]:', err);
+    res.status(500).json({ error: err.message || 'Internal error' });
+  }
+});
+
+// C. Fetch Security Events for a specific device
+apiRouter.get('/mobile/security-events/:imei', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { imei } = req.params;
+    const { data, error } = await serverSupabase
+      .from('mobile_security_events')
+      .select('*')
+      .eq('device_imei', imei)
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+
+    res.json({ success: true, events: data || [] });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 

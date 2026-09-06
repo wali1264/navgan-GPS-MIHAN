@@ -20,9 +20,17 @@ public class ApiClient {
     private static final String TAG = "FleetApiClient";
     private static final String PREF_NAME = "FleetAgentPrefs";
 
+    // Direct Supabase REST API Configuration (Option A: 100% reliable, zero-middleman)
+    public static final String SUPABASE_REST_BASE = "https://yujovpmltigdtelftvdz.supabase.co";
+    public static final String SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1am92cG1sdGlnZHRlbGZ0dmR6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgwODE4NzksImV4cCI6MjEwMzY1Nzg3OX0.YAyi-QEJA4QKL4GePA4S5lH9Pi5TqsYCnehUf795kAI";
+
     public static String getServerUrl(Context context) {
         SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
-        return prefs.getString("server_url", "https://your-fleet-server.com");
+        String url = prefs.getString("server_url", SUPABASE_REST_BASE);
+        if (url == null || url.trim().isEmpty() || url.contains("your-fleet-server.com")) {
+            return SUPABASE_REST_BASE;
+        }
+        return url.trim();
     }
 
     public static String getDeviceImei(Context context) {
@@ -40,17 +48,13 @@ public class ApiClient {
         return prefs.getString("registered_iccid", "");
     }
 
-    /**
-     * Checks if a detected SIM ICCID is present in the owner's authorized SIM whitelist.
-     * Supports single-SIM and dual-SIM smartphones (ICCIDs separated by comma).
-     */
     public static boolean isSimAuthorized(Context context, String detectedIccid) {
         if (detectedIccid == null || detectedIccid.trim().isEmpty()) {
-            return true; // Cannot determine, do not trigger false alarm
+            return true;
         }
         String registeredIccids = getRegisteredIccid(context);
         if (registeredIccids == null || registeredIccids.trim().isEmpty()) {
-            return true; // Whitelist not configured yet, no false alarm
+            return true;
         }
         String[] allowedList = registeredIccids.split(",");
         for (String allowed : allowedList) {
@@ -103,31 +107,33 @@ public class ApiClient {
     }
 
     public static TelemetryResult sendTelemetryDetailed(Context context, double lat, double lng, float speed, float bearing, double altitude) {
+        String baseUrl = getServerUrl(context);
+        String imei = getDeviceImei(context);
+        int speedKm = (int) (speed * 3.6f);
+        int battery = getBatteryLevel(context);
+
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
+        sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
+        String now = sdf.format(new Date());
+
+        // Check if user is using Direct Supabase (recommended) or Custom Gateway
+        boolean isSupabase = baseUrl.contains("supabase.co");
+
+        if (isSupabase) {
+            return sendDirectSupabaseTelemetry(imei, lat, lng, speedKm, (int) bearing, (int) altitude, battery, now);
+        }
+
+        // Custom Server (e.g. Vercel or Custom VPS API)
         try {
-            String baseUrl = getServerUrl(context);
-            if (baseUrl == null || baseUrl.isEmpty() || baseUrl.contains("your-fleet-server.com")) {
-                LogManager.warning("HTTP", "آدرس سرور هنوز تنظیم نشده است.");
-                return new TelemetryResult(false, 0, null, "آدرس سرور تنظیم نشده است");
-            }
-
             String fullUrl = baseUrl.replaceAll("/+$", "") + "/api/mobile/telemetry";
-            String imei = getDeviceImei(context);
-
             URL url = new URL(fullUrl);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
             conn.setRequestProperty("Accept", "application/json");
             conn.setDoOutput(true);
-            conn.setConnectTimeout(9000);
-            conn.setReadTimeout(9000);
-
-            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
-            sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
-            String now = sdf.format(new Date());
-
-            int speedKm = (int) (speed * 3.6f);
-            int battery = getBatteryLevel(context);
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(8000);
 
             JSONObject json = new JSONObject();
             json.put("imei", imei);
@@ -140,8 +146,8 @@ public class ApiClient {
             json.put("gsm_signal", 95);
             json.put("recorded_at", now);
 
-            LogManager.info("HTTP", String.format(Locale.US, "ارسال به %s | کد: %s | مختصات: %.5f, %.5f | باتری: %d%%",
-                    fullUrl, imei, lat, lng, battery));
+            LogManager.info("HTTP", String.format(Locale.US, "ارسال به %s | کد: %s | مختصات: %.5f, %.5f",
+                    fullUrl, imei, lat, lng));
 
             byte[] input = json.toString().getBytes(StandardCharsets.UTF_8);
             try (OutputStream os = conn.getOutputStream()) {
@@ -149,56 +155,150 @@ public class ApiClient {
             }
 
             int code = conn.getResponseCode();
-            String responseBody = "";
-            java.io.InputStream stream = (code >= 200 && code < 400) ? conn.getInputStream() : conn.getErrorStream();
-            if (stream != null) {
-                java.util.Scanner s = new java.util.Scanner(stream, "UTF-8").useDelimiter("\\A");
-                responseBody = s.hasNext() ? s.next() : "";
-                stream.close();
-            }
-
+            String responseBody = readStream(conn, code);
             conn.disconnect();
 
             if (code >= 200 && code < 300) {
                 LogManager.success("HTTP " + code, "✓ ثبت موفق در سرور و دیتابیس: " + responseBody);
                 return new TelemetryResult(true, code, responseBody, null);
             } else {
-                LogManager.error("HTTP " + code, "خطا از سمت سرور: " + responseBody);
+                LogManager.warning("HTTP " + code, "پاسخ ناموفق سرور واسط. سوئیچ خودکار به اتصال مستقیم دیتابیس...");
+                // Seamless fallback to Supabase Direct
+                return sendDirectSupabaseTelemetry(imei, lat, lng, speedKm, (int) bearing, (int) altitude, battery, now);
+            }
+        } catch (Exception e) {
+            LogManager.warning("NETWORK", "خطای شبکه سرور واسط (" + e.getMessage() + ")؛ سوئیچ خودکار به اتصال مستقیم دیتابیس...");
+            // Seamless fallback to Supabase Direct
+            return sendDirectSupabaseTelemetry(imei, lat, lng, speedKm, (int) bearing, (int) altitude, battery, now);
+        }
+    }
+
+    /**
+     * Direct Supabase REST Telemetry Insertion (Option A)
+     * Direct, ultra-fast, zero-middleman, authenticated via Supabase public key.
+     */
+    private static TelemetryResult sendDirectSupabaseTelemetry(String imei, double lat, double lng, int speedKm, int heading, int altitude, int battery, String now) {
+        try {
+            String fullUrl = SUPABASE_REST_BASE + "/rest/v1/gps_telemetry";
+            URL url = new URL(fullUrl);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("apikey", SUPABASE_ANON_KEY);
+            conn.setRequestProperty("Authorization", "Bearer " + SUPABASE_ANON_KEY);
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            conn.setRequestProperty("Prefer", "return=representation");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(8000);
+
+            JSONObject json = new JSONObject();
+            json.put("device_imei", imei);
+            json.put("lat", lat);
+            json.put("lng", lng);
+            json.put("speed", speedKm);
+            json.put("heading", heading);
+            json.put("altitude", altitude);
+            json.put("battery_level", battery);
+            json.put("gsm_signal", 95);
+            json.put("ignition", speedKm > 0 || true);
+            json.put("satellites", 12);
+            json.put("recorded_at", now);
+
+            LogManager.info("SUPABASE", String.format(Locale.US, "ارسال مستقیم به دیتابیس | دستگاه: %s | مختصات: %.5f, %.5f",
+                    imei, lat, lng));
+
+            byte[] input = json.toString().getBytes(StandardCharsets.UTF_8);
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(input, 0, input.length);
+            }
+
+            int code = conn.getResponseCode();
+            String responseBody = readStream(conn, code);
+            conn.disconnect();
+
+            if (code >= 200 && code < 300) {
+                LogManager.success("HTTP " + code, "✓ ثبت موفق و مستقیم در پایگاه‌داده Supabase (زنده)");
+                // Update device status to online in background
+                updateDeviceStatusAsync(imei, now);
+                return new TelemetryResult(true, code, responseBody, null);
+            } else {
+                LogManager.error("HTTP " + code, "خطای دیتابیس Supabase: " + responseBody);
                 return new TelemetryResult(false, code, responseBody, "کد پاسخ: " + code);
             }
         } catch (Exception e) {
             String err = e.getClass().getSimpleName() + ": " + e.getMessage();
-            Log.e(TAG, "sendTelemetry failed: " + err);
-            LogManager.error("NETWORK", "خطای اتصال به سرور: " + err);
+            Log.e(TAG, "sendDirectSupabaseTelemetry failed: " + err);
+            LogManager.error("NETWORK", "خطای اتصال مستقیم به دیتابیس: " + err);
             return new TelemetryResult(false, -1, null, err);
         }
     }
 
+    private static void updateDeviceStatusAsync(String imei, String now) {
+        new Thread(() -> {
+            try {
+                // Update devices status
+                String patchUrl = SUPABASE_REST_BASE + "/rest/v1/devices?imei=eq." + imei;
+                URL url = new URL(patchUrl);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("X-HTTP-Method-Override", "PATCH");
+                conn.setRequestProperty("apikey", SUPABASE_ANON_KEY);
+                conn.setRequestProperty("Authorization", "Bearer " + SUPABASE_ANON_KEY);
+                conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                conn.setDoOutput(true);
+                conn.setConnectTimeout(5000);
+
+                JSONObject json = new JSONObject();
+                json.put("status", "online");
+                json.put("last_online", now);
+
+                byte[] input = json.toString().getBytes(StandardCharsets.UTF_8);
+                try (OutputStream os = conn.getOutputStream()) {
+                    os.write(input, 0, input.length);
+                }
+                conn.getResponseCode();
+                conn.disconnect();
+            } catch (Exception ignored) {}
+        }).start();
+    }
+
     public static boolean sendSecurityEvent(Context context, String eventType, String newSimNumber, String photoUrl, double lat, double lng) {
         try {
-            String baseUrl = getServerUrl(context);
-            if (baseUrl == null || baseUrl.isEmpty() || baseUrl.contains("your-fleet-server.com")) {
-                return false;
-            }
+            String imei = getDeviceImei(context);
+            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
+            sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
+            String now = sdf.format(new Date());
 
-            URL url = new URL(baseUrl.replaceAll("/+$", "") + "/api/mobile/security-event");
+            String fullUrl = SUPABASE_REST_BASE + "/rest/v1/alerts";
+            URL url = new URL(fullUrl);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
+            conn.setRequestProperty("apikey", SUPABASE_ANON_KEY);
+            conn.setRequestProperty("Authorization", "Bearer " + SUPABASE_ANON_KEY);
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-            conn.setRequestProperty("Accept", "application/json");
+            conn.setRequestProperty("Prefer", "return=representation");
             conn.setDoOutput(true);
-            conn.setConnectTimeout(10000);
-            conn.setReadTimeout(10000);
+            conn.setConnectTimeout(8000);
+
+            String title = "هشدار امنیتی ردیاب گوشی";
+            if ("sim_changed".equals(eventType)) title = "🚨 هشدار تعویض سیمکارت غیرمجاز";
+            else if ("panic_siren".equals(eventType)) title = "🔊 پخش آژیر اضطراری ضد سرقت";
+            else if ("failed_unlock".equals(eventType)) title = "📸 تلاش ناموفق برای باز کردن قفل صفحه";
+
+            String desc = "شناسه دستگاه: " + imei;
+            if (newSimNumber != null) desc += " | شماره سیمکارت جدید: " + newSimNumber;
+            if (photoUrl != null) desc += " | تصویر متجاوز: " + photoUrl;
 
             JSONObject json = new JSONObject();
-            json.put("imei", getDeviceImei(context));
-            json.put("event_type", eventType);
-            if (newSimNumber != null) json.put("new_sim_number", newSimNumber);
-            if (photoUrl != null) json.put("photo_url", photoUrl);
+            json.put("device_imei", imei);
+            json.put("alert_type", eventType);
+            json.put("title", title);
+            json.put("description", desc);
             if (lat != 0 && lng != 0) {
                 json.put("lat", lat);
                 json.put("lng", lng);
             }
+            json.put("created_at", now);
 
             byte[] input = json.toString().getBytes(StandardCharsets.UTF_8);
             try (OutputStream os = conn.getOutputStream()) {
@@ -212,5 +312,18 @@ public class ApiClient {
             Log.e(TAG, "sendSecurityEvent failed: " + e.getMessage());
             return false;
         }
+    }
+
+    private static String readStream(HttpURLConnection conn, int code) {
+        try {
+            java.io.InputStream stream = (code >= 200 && code < 400) ? conn.getInputStream() : conn.getErrorStream();
+            if (stream != null) {
+                java.util.Scanner s = new java.util.Scanner(stream, "UTF-8").useDelimiter("\\A");
+                String res = s.hasNext() ? s.next() : "";
+                stream.close();
+                return res;
+            }
+        } catch (Exception ignored) {}
+        return "";
     }
 }

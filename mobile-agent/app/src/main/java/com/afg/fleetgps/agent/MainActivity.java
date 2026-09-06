@@ -102,10 +102,23 @@ public class MainActivity extends AppCompatActivity {
         subtitle.setPadding(0, 10, 0, 30);
         root.addView(subtitle);
 
-        editServerUrl = createStyledInput("آدرس سرور API سامانه (مثال: https://fleet.example.com)");
+        editServerUrl = createStyledInput("آدرس سرور API سامانه (یا Supabase Direct)");
         root.addView(editServerUrl);
 
-        editDeviceImei = createStyledInput("کد شناسایی دستگاه / IMEI (مثال: AFG-829104)");
+        Button btnSetSupabase = new Button(this);
+        btnSetSupabase.setText("⚡ تنظیم خودکار: اتصال مستقیم ابری به Supabase (توصیه شده)");
+        btnSetSupabase.setTextSize(11);
+        btnSetSupabase.setBackgroundColor(0xFF0EA5E9);
+        btnSetSupabase.setTextColor(0xFFFFFFFF);
+        btnSetSupabase.setOnClickListener(v -> {
+            editServerUrl.setText(ApiClient.SUPABASE_REST_BASE);
+            Toast.makeText(this, "آدرس اتصال مستقیم به دیتابیس Supabase تنظیم شد", Toast.LENGTH_SHORT).show();
+        });
+        root.addView(btnSetSupabase);
+
+        addSpacing(root, 8);
+
+        editDeviceImei = createStyledInput("کد شناسایی دستگاه / IMEI (مثال: AFG-000001 یا AFG-105993)");
         root.addView(editDeviceImei);
 
         editEmergencyPhone = createStyledInput("شماره تماس اضطراری جهت دریافت پیامک سرقت");
@@ -185,7 +198,11 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void loadCurrentConfig() {
-        editServerUrl.setText(ApiClient.getServerUrl(this));
+        String s = ApiClient.getServerUrl(this);
+        if (s == null || s.isEmpty() || s.contains("your-fleet-server.com")) {
+            s = ApiClient.SUPABASE_REST_BASE;
+        }
+        editServerUrl.setText(s);
         editDeviceImei.setText(ApiClient.getDeviceImei(this));
         editEmergencyPhone.setText(ApiClient.getEmergencyPhone(this));
         detectAndDisplaySimInfo();
@@ -401,7 +418,12 @@ public class MainActivity extends AppCompatActivity {
         infoCard.setPadding(25, 20, 25, 20);
 
         TextView txtServer = new TextView(this);
-        txtServer.setText("🌐 سرور مقصد: " + ApiClient.getServerUrl(this));
+        String srv = ApiClient.getServerUrl(this);
+        if (srv.contains("supabase.co")) {
+            txtServer.setText("🌐 سرور مقصد: اتصال مستقیم ابری دیتابیس (Supabase)");
+        } else {
+            txtServer.setText("🌐 سرور مقصد: " + srv);
+        }
         txtServer.setTextSize(12);
         txtServer.setTextColor(0xFF94A3B8);
         infoCard.addView(txtServer);

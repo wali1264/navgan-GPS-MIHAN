@@ -116,7 +116,7 @@ public class ApiClient {
             URL url = new URL(fullUrl);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
-            conn.setRequestProperty("Content-Type", "application/json; utf-8");
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
             conn.setRequestProperty("Accept", "application/json");
             conn.setDoOutput(true);
             conn.setConnectTimeout(9000);
@@ -184,7 +184,7 @@ public class ApiClient {
             URL url = new URL(baseUrl.replaceAll("/+$", "") + "/api/mobile/security-event");
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
-            conn.setRequestProperty("Content-Type", "application/json; utf-8");
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
             conn.setRequestProperty("Accept", "application/json");
             conn.setDoOutput(true);
             conn.setConnectTimeout(10000);

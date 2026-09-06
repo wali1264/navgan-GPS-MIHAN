@@ -9,6 +9,45 @@ const SUPABASE_KEY =
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
+async function parseRequestBody(req: any): Promise<any> {
+  if (req.body && typeof req.body === 'object') {
+    return req.body;
+  }
+  if (typeof req.body === 'string' && req.body.trim().length > 0) {
+    try {
+      return JSON.parse(req.body);
+    } catch {
+      return null;
+    }
+  }
+  return new Promise((resolve) => {
+    let data = '';
+    req.on('data', (chunk: any) => {
+      data += chunk;
+    });
+    req.on('end', () => {
+      try {
+        if (!data || data.trim().length === 0) {
+          resolve({});
+        } else {
+          resolve(JSON.parse(data));
+        }
+      } catch {
+        resolve(null);
+      }
+    });
+    req.on('error', () => {
+      resolve(null);
+    });
+  });
+}
+
 export default async function handler(req: any, res: any) {
   // Setup Global CORS Headers
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -38,14 +77,7 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    let body = req.body;
-    if (typeof body === 'string') {
-      try {
-        body = JSON.parse(body);
-      } catch {
-        // use raw body
-      }
-    }
+    const body = await parseRequestBody(req);
 
     if (!body || typeof body !== 'object') {
       return res.status(400).json({ success: false, error: 'پیکربندی بادی ارسالی نامعتبر است' });

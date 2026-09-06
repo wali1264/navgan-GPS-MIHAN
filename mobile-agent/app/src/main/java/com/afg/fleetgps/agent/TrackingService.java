@@ -13,6 +13,7 @@ import android.location.LocationListener;
 import android.location.LocationManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
@@ -38,7 +39,23 @@ public class TrackingService extends Service {
     private LocationManager nativeLocationManager;
     private LocationListener nativeLocationListener;
     private long lastTelemetrySentTime = 0;
+    private static long lastSuccessfulInternetTime = System.currentTimeMillis();
+    private Handler offlineMonitorHandler;
+    private Runnable offlineMonitorRunnable;
 
+    public static class HarvestedLocation {
+        public final Location location;
+        public final String source;
+        public final long timestamp;
+
+        public HarvestedLocation(Location location, String source, long timestamp) {
+            this.location = location;
+            this.source = source;
+            this.timestamp = timestamp;
+        }
+    }
+
+    public static volatile HarvestedLocation lastHarvestedLocation = null;
     public static Location lastKnownLocation = null;
 
     @Override
@@ -55,7 +72,11 @@ public class TrackingService extends Service {
                 if (locationResult == null) return;
                 for (Location location : locationResult.getLocations()) {
                     if (location != null) {
-                        processNewLocation(location, "Google Play Fused");
+                        String source = "GPS ماهواره‌ای";
+                        if (location.getProvider() != null && location.getProvider().equalsIgnoreCase(LocationManager.NETWORK_PROVIDER)) {
+                            source = "دکل مخابراتی/Cell";
+                        }
+                        processNewLocation(location, source);
                     }
                 }
             }
@@ -65,24 +86,31 @@ public class TrackingService extends Service {
         requestImmediateLocation();
         startLocationUpdates();
         setupNativeFallbackLocation();
+        startOfflineInternetMonitoring();
     }
 
     private synchronized void processNewLocation(Location location, String source) {
         long now = System.currentTimeMillis();
-        // Throttle to maximum once every 5 seconds to prevent spam
-        if (now - lastTelemetrySentTime < 5000) {
+        // Always store freshest coordinates into Harvested Memory Cache
+        lastHarvestedLocation = new HarvestedLocation(location, source, now);
+        lastKnownLocation = location;
+
+        // Check user-configured online interval
+        int intervalSec = ApiClient.getOnlineTrackingIntervalSeconds(this);
+        long minIntervalMillis = Math.max(5000L, intervalSec * 1000L);
+        if (now - lastTelemetrySentTime < minIntervalMillis) {
+            // Keep harvested in RAM, but wait until interval passes before sending to Supabase
             return;
         }
         lastTelemetrySentTime = now;
-        lastKnownLocation = location;
 
         float accuracy = location.hasAccuracy() ? location.getAccuracy() : -1;
         LogManager.info("GPS", String.format(Locale.US,
-                "موقعیت دریافت شد (%s): %.5f, %.5f | دقت: %.1fm | سرعت: %.1f km/h",
+                "موقعیت استخراج شد (%s): %.5f, %.5f | دقت: %.1fm | سرعت: %.1f km/h",
                 source, location.getLatitude(), location.getLongitude(), accuracy, location.getSpeed() * 3.6f));
 
         new Thread(() -> {
-            ApiClient.sendTelemetry(
+            ApiClient.TelemetryResult result = ApiClient.sendTelemetry(
                     getApplicationContext(),
                     location.getLatitude(),
                     location.getLongitude(),
@@ -90,6 +118,9 @@ public class TrackingService extends Service {
                     location.getBearing(),
                     location.getAltitude()
             );
+            if (result != null && result.success) {
+                lastSuccessfulInternetTime = System.currentTimeMillis();
+            }
         }).start();
     }
 
@@ -102,7 +133,7 @@ public class TrackingService extends Service {
                             "آخرین موقعیت ثبت‌شده در گوشی: %.5f, %.5f", loc.getLatitude(), loc.getLongitude()));
                     processNewLocation(loc, "LastKnownCache");
                 } else {
-                    LogManager.info("GPS", "در انتظار دریافت قفل ماهواره‌ای تازه...");
+                    LogManager.info("GPS", "در انتظار دریافت قفل موقعیت مکانی (ماهواره یا دکل آنتن)...");
                 }
             }).addOnFailureListener(e -> {
                 LogManager.warning("GPS", "عدم امکان دریافت موقعیت اولیه: " + e.getMessage());
@@ -115,14 +146,24 @@ public class TrackingService extends Service {
     @SuppressLint("MissingPermission")
     private void startLocationUpdates() {
         try {
-            LocationRequest locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 15000)
+            // High Accuracy GPS request
+            LocationRequest locationRequestHigh = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 15000)
                     .setMinUpdateIntervalMillis(8000)
-                    .setMinUpdateDistanceMeters(0) // Stationary devices will update on timer
+                    .setMinUpdateDistanceMeters(0)
                     .build();
 
-            fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper());
-            Log.d(TAG, "Location updates requested successfully");
-            LogManager.info("GPS", "درخواست موقعیت دوره‌ای فعال شد (فاصله زمانی: ۱۵ ثانیه).");
+            fusedLocationClient.requestLocationUpdates(locationRequestHigh, locationCallback, Looper.getMainLooper());
+
+            // Balanced Power request (uses Cell-Towers & Wi-Fi networks even if GPS satellite toggle is off)
+            LocationRequest locationRequestBalanced = new LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 20000)
+                    .setMinUpdateIntervalMillis(10000)
+                    .setMinUpdateDistanceMeters(0)
+                    .build();
+
+            fusedLocationClient.requestLocationUpdates(locationRequestBalanced, locationCallback, Looper.getMainLooper());
+
+            Log.d(TAG, "Location updates (High + Balanced Cell) requested successfully");
+            LogManager.info("GPS", "موتور موقعیت‌یابی ترکیبی (ماهواره GPS + دکل‌های مخابراتی) فعال گردید.");
         } catch (Exception e) {
             Log.e(TAG, "Error requesting location updates: " + e.getMessage());
             LogManager.error("GPS", "خطا در ثبت درخواست موقعیت Fused: " + e.getMessage());
@@ -139,7 +180,12 @@ public class TrackingService extends Service {
                 @Override
                 public void onLocationChanged(Location location) {
                     if (location != null) {
-                        processNewLocation(location, "Android Native");
+                        String prov = location.getProvider();
+                        String tag = "GPS ماهواره‌ای";
+                        if (LocationManager.NETWORK_PROVIDER.equalsIgnoreCase(prov)) {
+                            tag = "دکل آنتن مخابراتی/وای‌فای";
+                        }
+                        processNewLocation(location, tag);
                     }
                 }
 
@@ -153,33 +199,125 @@ public class TrackingService extends Service {
 
                 @Override
                 public void onProviderDisabled(String provider) {
-                    LogManager.warning("GPS", "پرووایدر " + provider + " خاموش شد.");
+                    LogManager.warning("GPS", "پرووایدر " + provider + " توسط کاربر خاموش شد (سوئیچ خودکار به سایر منابع).");
                 }
             };
 
-            // Register GPS Provider
-            if (nativeLocationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                nativeLocationManager.requestLocationUpdates(
-                        LocationManager.GPS_PROVIDER,
-                        15000,
-                        0,
-                        nativeLocationListener,
-                        Looper.getMainLooper()
-                );
-            }
+            // Register GPS Provider if available
+            try {
+                if (nativeLocationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                    nativeLocationManager.requestLocationUpdates(
+                            LocationManager.GPS_PROVIDER,
+                            15000,
+                            0,
+                            nativeLocationListener,
+                            Looper.getMainLooper()
+                    );
+                }
+            } catch (Exception ignored) {}
 
-            // Register Network Provider (useful indoors)
-            if (nativeLocationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+            // Register Cell Network Provider (works indoors and even when GPS satellite is turned off)
+            try {
+                if (nativeLocationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                    nativeLocationManager.requestLocationUpdates(
+                            LocationManager.NETWORK_PROVIDER,
+                            15000,
+                            0,
+                            nativeLocationListener,
+                            Looper.getMainLooper()
+                    );
+                    LogManager.info("GPS", "پرووایدر بومی دکل‌های مخابراتی (Network Provider) آماده به کار است.");
+                }
+            } catch (Exception ignored) {}
+
+            // Passive provider
+            try {
                 nativeLocationManager.requestLocationUpdates(
-                        LocationManager.NETWORK_PROVIDER,
+                        LocationManager.PASSIVE_PROVIDER,
                         15000,
                         0,
                         nativeLocationListener,
                         Looper.getMainLooper()
                 );
-            }
+            } catch (Exception ignored) {}
+
         } catch (Exception e) {
             LogManager.warning("GPS", "خطای راه‌اندازی پرووایدر بومی اندروید: " + e.getMessage());
+        }
+    }
+
+    private void startOfflineInternetMonitoring() {
+        offlineMonitorHandler = new Handler(Looper.getMainLooper());
+        offlineMonitorRunnable = new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    checkAndTriggerOfflineSms();
+                } catch (Exception e) {
+                    Log.e(TAG, "Offline monitoring check error: " + e.getMessage());
+                }
+                // Check every 5 minutes
+                if (offlineMonitorHandler != null) {
+                    offlineMonitorHandler.postDelayed(this, 5 * 60 * 1000L);
+                }
+            }
+        };
+        offlineMonitorHandler.postDelayed(offlineMonitorRunnable, 2 * 60 * 1000L);
+    }
+
+    private void checkAndTriggerOfflineSms() {
+        if (!ApiClient.isOfflineSmsEnabled(this)) return;
+
+        int graceHours = ApiClient.getOfflineGraceHours(this);
+        long graceThresholdMillis = (long) graceHours * 3600 * 1000L;
+        long now = System.currentTimeMillis();
+        long offlineDuration = now - lastSuccessfulInternetTime;
+
+        if (offlineDuration >= graceThresholdMillis) {
+            int freqMinutes = ApiClient.getOfflineSmsFrequencyMinutes(this);
+            long freqMillis = (long) freqMinutes * 60 * 1000L;
+            long lastSent = ApiClient.getLastOfflineSmsSentTime(this);
+
+            if (now - lastSent >= freqMillis) {
+                String emergencyPhone = ApiClient.getEmergencyPhone(this);
+                if (emergencyPhone != null && !emergencyPhone.trim().isEmpty()) {
+                    sendOfflineEmergencySms(emergencyPhone, graceHours, offlineDuration);
+                    ApiClient.setLastOfflineSmsSentTime(this, now);
+                }
+            }
+        }
+    }
+
+    private void sendOfflineEmergencySms(String phone, int graceHours, long offlineDuration) {
+        HarvestedLocation harvested = lastHarvestedLocation;
+        Location loc = harvested != null ? harvested.location : lastKnownLocation;
+        String age = harvested != null ? ApiClient.formatLocationAge(harvested.timestamp) : "زنده";
+        String source = harvested != null ? harvested.source : (loc != null && loc.getProvider() != null ? loc.getProvider() : "دکل مخابراتی/Cell");
+        int battery = ApiClient.getBatteryLevel(this);
+
+        long offlineHours = Math.max(1, offlineDuration / (3600 * 1000L));
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("⚠️ هشدار قطعی اینترنت ردیاب (Fleet Guard):\n");
+        sb.append("اینترنت گوشی به مدت بیش از ").append(offlineHours).append(" ساعت قطع بوده است.\n");
+        if (loc != null) {
+            sb.append("📍 آخرین موقعیت مکانی:\n");
+            sb.append("https://maps.google.com/?q=").append(loc.getLatitude()).append(",").append(loc.getLongitude()).append("\n");
+            sb.append("زمان ثبت: ").append(age).append("\n");
+            sb.append("منبع داده: ").append(source).append("\n");
+            sb.append("دقت: ").append((int) loc.getAccuracy()).append("m | ");
+            sb.append("سرعت: ").append((int) (loc.getSpeed() * 3.6)).append(" km/h\n");
+        } else {
+            sb.append("📍 مختصات مکانی هنوز دریافت نشده است.\n");
+        }
+        sb.append("شارژ باتری: ").append(battery).append("%");
+
+        try {
+            android.telephony.SmsManager sms = android.telephony.SmsManager.getDefault();
+            sms.sendTextMessage(phone, null, sb.toString(), null, null);
+            LogManager.warning("OFFLINE_SMS", "پیامک اضطراری قطعی اینترنت (" + offlineHours + " ساعت) با موفقیت به شماره " + phone + " ارسال شد.");
+        } catch (Exception e) {
+            LogManager.error("OFFLINE_SMS", "خطا در ارسال پیامک اضطراری قطعی اینترنت: " + e.getMessage());
         }
     }
 

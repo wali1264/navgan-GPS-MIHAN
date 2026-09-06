@@ -77,6 +77,115 @@ public class ApiClient {
                 .apply();
     }
 
+    public static String getAntiTheftPin(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        return prefs.getString("anti_theft_pin", "1234");
+    }
+
+    public static void saveAntiTheftPin(Context context, String pin) {
+        if (pin == null || pin.trim().isEmpty()) pin = "1234";
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        prefs.edit().putString("anti_theft_pin", pin.trim()).apply();
+    }
+
+    public static boolean isStealthModeEnabled(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        return prefs.getBoolean("stealth_mode_active", false);
+    }
+
+    public static void setStealthMode(Context context, boolean enable) {
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        prefs.edit().putBoolean("stealth_mode_active", enable).apply();
+
+        try {
+            android.content.pm.PackageManager pm = context.getPackageManager();
+            android.content.ComponentName alias = new android.content.ComponentName(
+                    context,
+                    "com.afg.fleetgps.agent.LauncherAlias"
+            );
+            int newState = enable ?
+                    android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED :
+                    android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED;
+            pm.setComponentEnabledSetting(alias, newState, android.content.pm.PackageManager.DONT_KILL_APP);
+            Log.i(TAG, "LauncherAlias stealth state changed to: " + enable);
+        } catch (Exception e) {
+            Log.e(TAG, "Error setting stealth mode component: " + e.getMessage());
+        }
+    }
+
+    public static int getOnlineTrackingIntervalSeconds(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        return prefs.getInt("online_tracking_interval_sec", 15);
+    }
+
+    public static void setOnlineTrackingIntervalSeconds(Context context, int seconds) {
+        if (seconds < 5) seconds = 5;
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        prefs.edit().putInt("online_tracking_interval_sec", seconds).apply();
+    }
+
+    public static boolean isOfflineSmsEnabled(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        return prefs.getBoolean("offline_sms_enabled", false);
+    }
+
+    public static void setOfflineSmsEnabled(Context context, boolean enabled) {
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        prefs.edit().putBoolean("offline_sms_enabled", enabled).apply();
+    }
+
+    public static int getOfflineGraceHours(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        return prefs.getInt("offline_grace_hours", 3);
+    }
+
+    public static void setOfflineGraceHours(Context context, int hours) {
+        if (hours < 1) hours = 1;
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        prefs.edit().putInt("offline_grace_hours", hours).apply();
+    }
+
+    public static int getOfflineSmsFrequencyMinutes(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        return prefs.getInt("offline_sms_freq_minutes", 60);
+    }
+
+    public static void setOfflineSmsFrequencyMinutes(Context context, int minutes) {
+        if (minutes < 5) minutes = 5;
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        prefs.edit().putInt("offline_sms_freq_minutes", minutes).apply();
+    }
+
+    public static long getLastOfflineSmsSentTime(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        return prefs.getLong("last_offline_sms_sent_time", 0);
+    }
+
+    public static void setLastOfflineSmsSentTime(Context context, long time) {
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        prefs.edit().putLong("last_offline_sms_sent_time", time).apply();
+    }
+
+    public static String formatLocationAge(long timestamp) {
+        if (timestamp <= 0) return "نامشخص";
+        long diffMs = System.currentTimeMillis() - timestamp;
+        if (diffMs < 0) diffMs = 0;
+        long diffSec = diffMs / 1000;
+        if (diffSec < 120) {
+            return "زنده (هم‌اکنون)";
+        }
+        long diffMin = diffSec / 60;
+        if (diffMin < 60) {
+            return diffMin + " دقیقه پیش";
+        }
+        long diffHours = diffMin / 60;
+        long remMin = diffMin % 60;
+        if (remMin == 0) {
+            return diffHours + " ساعت پیش";
+        }
+        return diffHours + " ساعت و " + remMin + " دقیقه پیش";
+    }
+
     public static int getBatteryLevel(Context context) {
         try {
             BatteryManager bm = (BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);

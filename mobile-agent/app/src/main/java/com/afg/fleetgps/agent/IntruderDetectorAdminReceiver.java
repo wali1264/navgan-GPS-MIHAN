@@ -38,7 +38,16 @@ public class IntruderDetectorAdminReceiver extends DeviceAdminReceiver {
 
     @Override
     public CharSequence onDisableRequested(Context context, Intent intent) {
-        return "هشدار: غیرفعال‌سازی دسترسی امنیتی ممکن است قابلیت‌های ردیابی ضد سرقت را مختل سازد.";
+        try {
+            android.app.admin.DevicePolicyManager dpm = (android.app.admin.DevicePolicyManager) context.getSystemService(Context.DEVICE_POLICY_SERVICE);
+            if (dpm != null) {
+                dpm.lockNow(); // Immediately lock phone to block intruder
+                LogManager.warning("SECURITY", "تلاش غیرمجاز جهت لغو سرپرست دستگاه شناسایی شد! گوشی فوراً قفل گردید.");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to lock device on disable request: " + e.getMessage());
+        }
+        return "هشدار امنیتی: غیرفعال‌سازی این بخش مجاز نمی‌باشد. دستگاه به منظور حفظ امنیت بلافاصله قفل گردید.";
     }
 
     @Override

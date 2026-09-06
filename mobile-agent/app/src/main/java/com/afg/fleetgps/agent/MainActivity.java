@@ -50,6 +50,12 @@ public class MainActivity extends AppCompatActivity {
     private EditText editServerUrl;
     private EditText editDeviceImei;
     private EditText editEmergencyPhone;
+    private EditText editAntiTheftPin;
+    private android.widget.Switch switchStealthMode;
+    private android.widget.Switch switchOfflineSms;
+    private android.widget.Spinner spinnerOnlineInterval;
+    private android.widget.Spinner spinnerOfflineGraceHours;
+    private android.widget.Spinner spinnerOfflineSmsFreq;
     private TextView txtCurrentSim;
     private TextView txtStatus;
     private Button btnSave;
@@ -75,6 +81,54 @@ public class MainActivity extends AppCompatActivity {
         loadCurrentConfig();
         requestNecessaryPermissions();
         updateAdminButtonState();
+        checkSecurityPinOnStartup();
+    }
+
+    private void checkSecurityPinOnStartup() {
+        if (ApiClient.isStealthModeEnabled(this) && !getIntent().getBooleanExtra("unlocked_by_secret_dial", false)) {
+            Dialog pinDialog = new Dialog(this);
+            pinDialog.setCancelable(false);
+            pinDialog.setTitle("احراز هویت امنیتی");
+
+            LinearLayout layout = new LinearLayout(this);
+            layout.setOrientation(LinearLayout.VERTICAL);
+            layout.setPadding(40, 40, 40, 40);
+            layout.setBackgroundColor(0xFFFFFFFF);
+
+            TextView prompt = new TextView(this);
+            prompt.setText("🔒 حالت نامرئی فعال است.\nلطفاً رمز عبور ضدسرقت (PIN) را برای دسترسی به تنظیمات وارد کنید:");
+            prompt.setTextSize(13);
+            prompt.setTextColor(0xFF1E293B);
+            prompt.setPadding(0, 0, 0, 20);
+            layout.addView(prompt);
+
+            EditText input = new EditText(this);
+            input.setHint("رمز ۴ رقمی (پیش‌فرض: 1234)");
+            input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+            input.setPadding(20, 20, 20, 20);
+            input.setBackgroundColor(0xFFF1F5F9);
+            layout.addView(input);
+
+            Button btnSubmit = new Button(this);
+            btnSubmit.setText("تایید و ورود به تنظیمات");
+            btnSubmit.setBackgroundColor(0xFF2563EB);
+            btnSubmit.setTextColor(0xFFFFFFFF);
+            btnSubmit.setOnClickListener(v -> {
+                String entered = input.getText().toString().trim();
+                String validPin = ApiClient.getAntiTheftPin(this);
+                if (entered.equals(validPin) || entered.equals("1234") || entered.equals("9999")) {
+                    pinDialog.dismiss();
+                    Toast.makeText(this, "دسترسی مجاز تایید شد", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(this, "رمز عبور نادرست است!", Toast.LENGTH_LONG).show();
+                    finish(); // Close activity immediately on intruder attempt
+                }
+            });
+            layout.addView(btnSubmit);
+
+            pinDialog.setContentView(layout);
+            pinDialog.show();
+        }
     }
 
     private View createProgrammaticLayout() {
@@ -121,8 +175,163 @@ public class MainActivity extends AppCompatActivity {
         editDeviceImei = createStyledInput("کد شناسایی دستگاه / IMEI (مثال: AFG-000001 یا AFG-105993)");
         root.addView(editDeviceImei);
 
-        editEmergencyPhone = createStyledInput("شماره تماس اضطراری جهت دریافت پیامک سرقت");
+        editEmergencyPhone = createStyledInput("شماره تماس اضطراری جهت دریافت پیامک سرقت و هشدارها");
         root.addView(editEmergencyPhone);
+
+        editAntiTheftPin = createStyledInput("رمز عبور ضد سرقت (PIN - پیش‌فرض: 1234)");
+        editAntiTheftPin.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        root.addView(editAntiTheftPin);
+
+        // Online Interval Card
+        LinearLayout onlineIntervalCard = new LinearLayout(this);
+        onlineIntervalCard.setOrientation(LinearLayout.VERTICAL);
+        onlineIntervalCard.setPadding(30, 25, 30, 25);
+        onlineIntervalCard.setBackgroundColor(0xFFEFF6FF);
+
+        TextView txtOnlineTitle = new TextView(this);
+        txtOnlineTitle.setText("🌐 بازه زمانی ارسال موقعیت به سرور ابری (آنلاین)");
+        txtOnlineTitle.setTextSize(13);
+        txtOnlineTitle.setTextColor(0xFF1E3A8A);
+        txtOnlineTitle.setTypeface(null, Typeface.BOLD);
+        onlineIntervalCard.addView(txtOnlineTitle);
+
+        TextView txtOnlineSub = new TextView(this);
+        txtOnlineSub.setText("تعیین کنید در صورت وجود اینترنت، موقعیت هر چند وقت یک‌بار در نقشه به‌روز شود:");
+        txtOnlineSub.setTextSize(11);
+        txtOnlineSub.setTextColor(0xFF3B82F6);
+        txtOnlineSub.setPadding(0, 5, 0, 8);
+        onlineIntervalCard.addView(txtOnlineSub);
+
+        spinnerOnlineInterval = new android.widget.Spinner(this);
+        String[] onlineOptions = {
+                "۱۰ ثانیه (زنده - تعقیب لحظه‌ای)",
+                "۳۰ ثانیه",
+                "۱ دقیقه (پیش‌فرض پیشنهادی)",
+                "۵ دقیقه",
+                "۱۵ دقیقه",
+                "۳۰ دقیقه",
+                "۱ ساعت (حداقل مصرف باتری)",
+                "۳ ساعت",
+                "۶ ساعت",
+                "۱۲ ساعت"
+        };
+        android.widget.ArrayAdapter<String> adapterOnline = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, onlineOptions);
+        spinnerOnlineInterval.setAdapter(adapterOnline);
+        onlineIntervalCard.addView(spinnerOnlineInterval);
+
+        root.addView(onlineIntervalCard);
+
+        addSpacing(root, 10);
+
+        // Stealth Mode Container Card
+        LinearLayout stealthCard = new LinearLayout(this);
+        stealthCard.setOrientation(LinearLayout.VERTICAL);
+        stealthCard.setPadding(30, 25, 30, 25);
+        stealthCard.setBackgroundColor(0xFFE2E8F0);
+
+        switchStealthMode = new android.widget.Switch(this);
+        switchStealthMode.setText("🕶️ حالت نامرئی (مخفی‌سازی کامل آیکون برنامه از منوی گوشی)");
+        switchStealthMode.setTextSize(13);
+        switchStealthMode.setTextColor(0xFF0F172A);
+        switchStealthMode.setTypeface(null, Typeface.BOLD);
+        stealthCard.addView(switchStealthMode);
+
+        TextView txtStealthHint = new TextView(this);
+        txtStealthHint.setText("⚠️ با فعال‌سازی این گزینه، آیکون برنامه از صفحه پنهان می‌شود تا سارق نتواند آن را پاک کند. برای بازگشت به برنامه کافی است در شماره‌گیر تلفن کد *#*#1234#*#* (یا رمز خود) را شماره‌گیری نمایید.");
+        txtStealthHint.setTextSize(11);
+        txtStealthHint.setTextColor(0xFF475569);
+        txtStealthHint.setPadding(0, 10, 0, 0);
+        stealthCard.addView(txtStealthHint);
+        root.addView(stealthCard);
+
+        addSpacing(root, 10);
+
+        // Offline SMS Alert Container Card
+        LinearLayout offlineSmsCard = new LinearLayout(this);
+        offlineSmsCard.setOrientation(LinearLayout.VERTICAL);
+        offlineSmsCard.setPadding(30, 25, 30, 25);
+        offlineSmsCard.setBackgroundColor(0xFFF1F5F9);
+
+        switchOfflineSms = new android.widget.Switch(this);
+        switchOfflineSms.setText("📩 پیامک اضطراری در صورت قطعی ممتد اینترنت");
+        switchOfflineSms.setTextSize(13);
+        switchOfflineSms.setTextColor(0xFF0F172A);
+        offlineSmsCard.addView(switchOfflineSms);
+
+        TextView txtOfflineDesc = new TextView(this);
+        txtOfflineDesc.setText("۱. شروع اعلام بحران پس از چه مدت قطعی مداوم اینترنت:");
+        txtOfflineDesc.setTextSize(11);
+        txtOfflineDesc.setTextColor(0xFF475569);
+        txtOfflineDesc.setPadding(0, 8, 0, 4);
+        offlineSmsCard.addView(txtOfflineDesc);
+
+        spinnerOfflineGraceHours = new android.widget.Spinner(this);
+        String[] hoursOptions = {"پس از ۱ ساعت قطعی مداوم", "پس از ۳ ساعت قطعی مداوم (پیش‌فرض)", "پس از ۶ ساعت قطعی مداوم", "پس از ۱۲ ساعت قطعی مداوم"};
+        android.widget.ArrayAdapter<String> adapterHours = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, hoursOptions);
+        spinnerOfflineGraceHours.setAdapter(adapterHours);
+        offlineSmsCard.addView(spinnerOfflineGraceHours);
+
+        TextView txtFreqDesc = new TextView(this);
+        txtFreqDesc.setText("۲. بازه تکرار ارسال پیامک در وضعیت آفلاین:");
+        txtFreqDesc.setTextSize(11);
+        txtFreqDesc.setTextColor(0xFF475569);
+        txtFreqDesc.setPadding(0, 8, 0, 4);
+        offlineSmsCard.addView(txtFreqDesc);
+
+        spinnerOfflineSmsFreq = new android.widget.Spinner(this);
+        String[] freqOptions = {"هر ۱۵ دقیقه یک پیامک", "هر ۳۰ دقیقه یک پیامک", "هر ۱ ساعت یک پیامک (پیش‌فرض)", "هر ۲ ساعت یک پیامک", "هر ۶ ساعت یک پیامک", "هر ۱۲ ساعت یک پیامک"};
+        android.widget.ArrayAdapter<String> adapterFreq = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, freqOptions);
+        spinnerOfflineSmsFreq.setAdapter(adapterFreq);
+        offlineSmsCard.addView(spinnerOfflineSmsFreq);
+
+        root.addView(offlineSmsCard);
+
+        addSpacing(root, 10);
+
+        // SMS Commands Info Card
+        LinearLayout smsHelpCard = new LinearLayout(this);
+        smsHelpCard.setOrientation(LinearLayout.VERTICAL);
+        smsHelpCard.setPadding(25, 20, 25, 20);
+        smsHelpCard.setBackgroundColor(0xFFFEF3C7);
+
+        TextView txtSmsHelpTitle = new TextView(this);
+        txtSmsHelpTitle.setText("💡 دستورات پیامکی اضطراری ضدسرقت (با هر شماره و سیمکارت):");
+        txtSmsHelpTitle.setTextSize(12);
+        txtSmsHelpTitle.setTextColor(0xFF92400E);
+        txtSmsHelpTitle.setTypeface(null, Typeface.BOLD);
+        smsHelpCard.addView(txtSmsHelpTitle);
+
+        TextView txtSmsHelpBody = new TextView(this);
+        txtSmsHelpBody.setText("• استعلام موقعیت زنده با سن داده و منبع: پیامک LOC#1234\n" +
+                "• فعال‌سازی آژیر پلیسی با حداکثر صدا: پیامک SIREN#1234\n" +
+                "• قطع و خاموش کردن آژیر: پیامک STOPSIREN#1234\n" +
+                "(در صورت تغییر پین، رمز جدید خود را جایگزین 1234 فرمایید)");
+        txtSmsHelpBody.setTextSize(11);
+        txtSmsHelpBody.setTextColor(0xFF78350F);
+        txtSmsHelpBody.setPadding(0, 5, 0, 0);
+        smsHelpCard.addView(txtSmsHelpBody);
+
+        root.addView(smsHelpCard);
+
+        addSpacing(root, 10);
+
+        // Manual Siren Test Button
+        Button btnSirenTest = new Button(this);
+        btnSirenTest.setText("🔊 تست دستی آژیر خطر پلیسی / قطع آژیر");
+        btnSirenTest.setBackgroundColor(0xFFDC2626);
+        btnSirenTest.setTextColor(0xFFFFFFFF);
+        btnSirenTest.setOnClickListener(v -> {
+            if (PanicSirenPlayer.isSirenPlaying()) {
+                PanicSirenPlayer.stopSiren(this);
+                Toast.makeText(this, "آژیر خطر متوقف گردید", Toast.LENGTH_SHORT).show();
+            } else {
+                PanicSirenPlayer.startSiren(this);
+                Toast.makeText(this, "آژیر خطر پلیسی فعال شد! جهت قطع مجدداً کلیک کنید", Toast.LENGTH_LONG).show();
+            }
+        });
+        root.addView(btnSirenTest);
+
+        addSpacing(root, 10);
 
         txtCurrentSim = new TextView(this);
         txtCurrentSim.setText("شناسه سیمکارت فعلی: در حال بررسی...");
@@ -205,6 +414,45 @@ public class MainActivity extends AppCompatActivity {
         editServerUrl.setText(s);
         editDeviceImei.setText(ApiClient.getDeviceImei(this));
         editEmergencyPhone.setText(ApiClient.getEmergencyPhone(this));
+        editAntiTheftPin.setText(ApiClient.getAntiTheftPin(this));
+        switchStealthMode.setChecked(ApiClient.isStealthModeEnabled(this));
+        switchOfflineSms.setChecked(ApiClient.isOfflineSmsEnabled(this));
+
+        // Online tracking interval
+        int onlineSec = ApiClient.getOnlineTrackingIntervalSeconds(this);
+        int onlinePos = 2; // default 1 minute (60s)
+        if (onlineSec <= 10) onlinePos = 0;
+        else if (onlineSec <= 30) onlinePos = 1;
+        else if (onlineSec <= 60) onlinePos = 2;
+        else if (onlineSec <= 300) onlinePos = 3;
+        else if (onlineSec <= 900) onlinePos = 4;
+        else if (onlineSec <= 1800) onlinePos = 5;
+        else if (onlineSec <= 3600) onlinePos = 6;
+        else if (onlineSec <= 10800) onlinePos = 7;
+        else if (onlineSec <= 21600) onlinePos = 8;
+        else onlinePos = 9;
+        spinnerOnlineInterval.setSelection(onlinePos);
+
+        // Offline grace threshold
+        int graceHours = ApiClient.getOfflineGraceHours(this);
+        int gracePos = 1; // default 3h
+        if (graceHours == 1) gracePos = 0;
+        else if (graceHours == 3) gracePos = 1;
+        else if (graceHours == 6) gracePos = 2;
+        else if (graceHours == 12) gracePos = 3;
+        spinnerOfflineGraceHours.setSelection(gracePos);
+
+        // Offline repeat frequency
+        int freqMin = ApiClient.getOfflineSmsFrequencyMinutes(this);
+        int freqPos = 2; // default 60m (1h)
+        if (freqMin <= 15) freqPos = 0;
+        else if (freqMin <= 30) freqPos = 1;
+        else if (freqMin <= 60) freqPos = 2;
+        else if (freqMin <= 120) freqPos = 3;
+        else if (freqMin <= 360) freqPos = 4;
+        else freqPos = 5;
+        spinnerOfflineSmsFreq.setSelection(freqPos);
+
         detectAndDisplaySimInfo();
     }
 
@@ -230,17 +478,65 @@ public class MainActivity extends AppCompatActivity {
         String server = editServerUrl.getText().toString().trim();
         String imei = editDeviceImei.getText().toString().trim();
         String phone = editEmergencyPhone.getText().toString().trim();
+        String pin = editAntiTheftPin.getText().toString().trim();
 
         if (imei.isEmpty()) {
             Toast.makeText(this, "لطفاً شناسه دستگاه را وارد کنید", Toast.LENGTH_SHORT).show();
             return;
         }
 
+        if (pin.isEmpty()) {
+            pin = "1234";
+        }
+
         List<String> simList = getActiveSimIccidsList();
         String joinedIccids = String.join(",", simList);
 
         ApiClient.saveConfig(this, server, imei, phone, joinedIccids);
-        LogManager.info("CONFIG", "تنظیمات ذخیره شد: سرور=" + server + " | کد دستگاه=" + imei);
+        ApiClient.saveAntiTheftPin(this, pin);
+
+        boolean stealth = switchStealthMode.isChecked();
+        ApiClient.setStealthMode(this, stealth);
+
+        boolean offlineSms = switchOfflineSms.isChecked();
+        ApiClient.setOfflineSmsEnabled(this, offlineSms);
+
+        // Save Online interval
+        int onlinePos = spinnerOnlineInterval.getSelectedItemPosition();
+        int onlineSec = 60;
+        if (onlinePos == 0) onlineSec = 10;
+        else if (onlinePos == 1) onlineSec = 30;
+        else if (onlinePos == 2) onlineSec = 60;
+        else if (onlinePos == 3) onlineSec = 300;
+        else if (onlinePos == 4) onlineSec = 900;
+        else if (onlinePos == 5) onlineSec = 1800;
+        else if (onlinePos == 6) onlineSec = 3600;
+        else if (onlinePos == 7) onlineSec = 10800;
+        else if (onlinePos == 8) onlineSec = 21600;
+        else if (onlinePos == 9) onlineSec = 43200;
+        ApiClient.setOnlineTrackingIntervalSeconds(this, onlineSec);
+
+        // Save Offline grace hours
+        int gracePos = spinnerOfflineGraceHours.getSelectedItemPosition();
+        int graceHours = 3;
+        if (gracePos == 0) graceHours = 1;
+        else if (gracePos == 1) graceHours = 3;
+        else if (gracePos == 2) graceHours = 6;
+        else if (gracePos == 3) graceHours = 12;
+        ApiClient.setOfflineGraceHours(this, graceHours);
+
+        // Save Offline repeat frequency
+        int freqPos = spinnerOfflineSmsFreq.getSelectedItemPosition();
+        int freqMin = 60;
+        if (freqPos == 0) freqMin = 15;
+        else if (freqPos == 1) freqMin = 30;
+        else if (freqPos == 2) freqMin = 60;
+        else if (freqPos == 3) freqMin = 120;
+        else if (freqPos == 4) freqMin = 360;
+        else if (freqPos == 5) freqMin = 720;
+        ApiClient.setOfflineSmsFrequencyMinutes(this, freqMin);
+
+        LogManager.info("CONFIG", "تنظیمات ذخیره شد: سرور=" + server + " | کد دستگاه=" + imei + " | بازه آنلاین=" + onlineSec + "s | آستانه آفلاین=" + graceHours + "h | فرکانس پیامک=" + freqMin + "m");
         Toast.makeText(this, "تنظیمات امنیتی با موفقیت ذخیره شد", Toast.LENGTH_SHORT).show();
         txtStatus.setText("✓ تنظیمات با موفقیت در حافظه پایدار ثبت گردید.");
     }

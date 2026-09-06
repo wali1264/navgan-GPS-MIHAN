@@ -36,26 +36,58 @@ public class SmsCommandReceiver extends BroadcastReceiver {
 
             Log.d(TAG, "Received SMS from " + sender + ": " + body);
 
-            if (body.toUpperCase().startsWith("LOC#")) {
-                handleLocationRequest(context, sender);
-            } else if (body.toUpperCase().startsWith("SIREN#")) {
-                handleSirenRequest(context, sender);
+            String savedPin = ApiClient.getAntiTheftPin(context);
+            String upperBody = body.toUpperCase();
+
+            // Command format: LOC#<PIN> (e.g. LOC#1234)
+            if (upperBody.startsWith("LOC#")) {
+                String providedPin = body.substring(4).trim();
+                if (providedPin.equalsIgnoreCase(savedPin) || savedPin.isEmpty()) {
+                    LogManager.info("SMS", "دستور پیامکی موقعیت مکانی با رمز معتبر از " + sender + " دریافت گردید.");
+                    handleLocationRequest(context, sender);
+                } else {
+                    LogManager.warning("SMS", "دستور پیامکی با رمز نامعتبر رد شد (فرستنده: " + sender + ")");
+                }
+            } else if (upperBody.startsWith("SIREN#")) {
+                String providedPin = body.substring(6).trim();
+                if (providedPin.equalsIgnoreCase(savedPin) || savedPin.isEmpty()) {
+                    LogManager.info("SMS", "دستور پیامکی فعال‌سازی آژیر با رمز معتبر از " + sender + " دریافت گردید.");
+                    handleSirenRequest(context, sender);
+                } else {
+                    LogManager.warning("SMS", "دستور آژیر با رمز نامعتبر رد شد (فرستنده: " + sender + ")");
+                }
+            } else if (upperBody.startsWith("STOPSIREN#")) {
+                String providedPin = body.substring(10).trim();
+                if (providedPin.equalsIgnoreCase(savedPin) || savedPin.isEmpty()) {
+                    LogManager.info("SMS", "دستور توقف آژیر با رمز معتبر از " + sender + " دریافت گردید.");
+                    PanicSirenPlayer.stopSiren(context);
+                    try {
+                        SmsManager.getDefault().sendTextMessage(sender, null, "🔇 آژیر خطر با موفقیت خاموش و متوقف گردید.", null, null);
+                    } catch (Exception ignored) {}
+                } else {
+                    LogManager.warning("SMS", "دستور توقف آژیر با رمز نامعتبر رد شد (فرستنده: " + sender + ")");
+                }
             }
         }
     }
 
     private void handleLocationRequest(Context context, String senderPhone) {
-        Location loc = TrackingService.lastKnownLocation;
+        TrackingService.HarvestedLocation harvested = TrackingService.lastHarvestedLocation;
+        Location loc = harvested != null ? harvested.location : TrackingService.lastKnownLocation;
+        String age = harvested != null ? ApiClient.formatLocationAge(harvested.timestamp) : "زنده";
+        String source = harvested != null ? harvested.source : (loc != null && loc.getProvider() != null ? loc.getProvider() : "GPS/Network");
         int battery = ApiClient.getBatteryLevel(context);
 
         StringBuilder reply = new StringBuilder();
-        reply.append("📍 موقعیت مکانی فعلی گوشی:\n");
+        reply.append("📍 موقعیت مکانی گوشی (Fleet Guard):\n");
         if (loc != null) {
             reply.append("https://maps.google.com/?q=").append(loc.getLatitude()).append(",").append(loc.getLongitude()).append("\n");
-            reply.append("دقت: ").append((int) loc.getAccuracy()).append(" متر\n");
+            reply.append("زمان ثبت: ").append(age).append("\n");
+            reply.append("منبع داده: ").append(source).append("\n");
+            reply.append("دقت: ").append((int) loc.getAccuracy()).append("m | ");
             reply.append("سرعت: ").append((int) (loc.getSpeed() * 3.6)).append(" km/h\n");
         } else {
-            reply.append("در انتظار دریافت سیگنال GPS ماهواره‌ای...\n");
+            reply.append("موقعیت در حال حاضر در دسترس نیست.\n");
         }
         reply.append("شارژ باتری: ").append(battery).append("%");
 
@@ -63,32 +95,24 @@ public class SmsCommandReceiver extends BroadcastReceiver {
             SmsManager sms = SmsManager.getDefault();
             sms.sendTextMessage(senderPhone, null, reply.toString(), null, null);
             Log.d(TAG, "Location SMS reply sent to " + senderPhone);
+            LogManager.success("SMS", "پاسخ موقعیت مکانی با سن موقعیت (" + age + ") به شماره " + senderPhone + " پیامک شد.");
         } catch (Exception e) {
             Log.e(TAG, "Error sending SMS reply: " + e.getMessage());
+            LogManager.error("SMS", "خطا در ارسال پاسخ پیامک: " + e.getMessage());
         }
     }
 
     private void handleSirenRequest(Context context, String senderPhone) {
         try {
-            // Force maximum volume even if phone is on mute/vibrate
-            AudioManager audioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
-            if (audioManager != null) {
-                int maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM);
-                audioManager.setStreamVolume(AudioManager.STREAM_ALARM, maxVolume, 0);
-            }
+            // Start continuous high-decibel sweep siren via PanicSirenPlayer
+            PanicSirenPlayer.startSiren(context);
 
-            Uri alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
-            if (alarmUri == null) {
-                alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
-            }
-
-            Ringtone ringtone = RingtoneManager.getRingtone(context, alarmUri);
-            if (ringtone != null) {
-                ringtone.play();
-            }
-
-            // Acknowledge via SMS
-            SmsManager.getDefault().sendTextMessage(senderPhone, null, "🔊 آژیر خطر با موفقیت روی گوشی فعال گردید.", null, null);
+            String savedPin = ApiClient.getAntiTheftPin(context);
+            // Acknowledge via SMS with stop code instruction
+            String reply = "🔊 آژیر خطر با حداکثر توان بلندگو به مدت ۵ دقیقه فعال گردید.\n" +
+                    "جهت قطع آژیر پیامک زیر را بفرستید:\n" +
+                    "STOPSIREN#" + savedPin;
+            SmsManager.getDefault().sendTextMessage(senderPhone, null, reply, null, null);
 
             // Report event to server
             new Thread(() -> {

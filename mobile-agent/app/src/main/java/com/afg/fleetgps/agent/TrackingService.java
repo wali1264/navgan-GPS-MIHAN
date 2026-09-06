@@ -110,7 +110,7 @@ public class TrackingService extends Service {
                 source, location.getLatitude(), location.getLongitude(), accuracy, location.getSpeed() * 3.6f));
 
         new Thread(() -> {
-            ApiClient.TelemetryResult result = ApiClient.sendTelemetry(
+            ApiClient.TelemetryResult result = ApiClient.sendTelemetryDetailed(
                     getApplicationContext(),
                     location.getLatitude(),
                     location.getLongitude(),

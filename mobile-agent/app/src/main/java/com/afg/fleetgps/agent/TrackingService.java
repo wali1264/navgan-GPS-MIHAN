@@ -9,7 +9,10 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
@@ -23,6 +26,8 @@ import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.Priority;
 
+import java.util.Locale;
+
 public class TrackingService extends Service {
     private static final String TAG = "FleetTrackingService";
     private static final String CHANNEL_ID = "FleetTrackingServiceChannel";
@@ -30,12 +35,18 @@ public class TrackingService extends Service {
 
     private FusedLocationProviderClient fusedLocationClient;
     private LocationCallback locationCallback;
+    private LocationManager nativeLocationManager;
+    private LocationListener nativeLocationListener;
+    private long lastTelemetrySentTime = 0;
+
     public static Location lastKnownLocation = null;
 
     @Override
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
+        LogManager.info("SERVICE", "سرویس ردیابی زنده در پس‌زمینه ایجاد شد.");
+
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
 
         locationCallback = new LocationCallback() {
@@ -44,38 +55,131 @@ public class TrackingService extends Service {
                 if (locationResult == null) return;
                 for (Location location : locationResult.getLocations()) {
                     if (location != null) {
-                        lastKnownLocation = location;
-                        new Thread(() -> {
-                            ApiClient.sendTelemetry(
-                                    getApplicationContext(),
-                                    location.getLatitude(),
-                                    location.getLongitude(),
-                                    location.getSpeed(),
-                                    location.getBearing(),
-                                    location.getAltitude()
-                            );
-                        }).start();
+                        processNewLocation(location, "Google Play Fused");
                     }
                 }
             }
         };
 
         startForeground(NOTIFICATION_ID, buildNotification());
+        requestImmediateLocation();
         startLocationUpdates();
+        setupNativeFallbackLocation();
+    }
+
+    private synchronized void processNewLocation(Location location, String source) {
+        long now = System.currentTimeMillis();
+        // Throttle to maximum once every 5 seconds to prevent spam
+        if (now - lastTelemetrySentTime < 5000) {
+            return;
+        }
+        lastTelemetrySentTime = now;
+        lastKnownLocation = location;
+
+        float accuracy = location.hasAccuracy() ? location.getAccuracy() : -1;
+        LogManager.info("GPS", String.format(Locale.US,
+                "موقعیت دریافت شد (%s): %.5f, %.5f | دقت: %.1fm | سرعت: %.1f km/h",
+                source, location.getLatitude(), location.getLongitude(), accuracy, location.getSpeed() * 3.6f));
+
+        new Thread(() -> {
+            ApiClient.sendTelemetry(
+                    getApplicationContext(),
+                    location.getLatitude(),
+                    location.getLongitude(),
+                    location.getSpeed(),
+                    location.getBearing(),
+                    location.getAltitude()
+            );
+        }).start();
+    }
+
+    @SuppressLint("MissingPermission")
+    private void requestImmediateLocation() {
+        try {
+            fusedLocationClient.getLastLocation().addOnSuccessListener(loc -> {
+                if (loc != null) {
+                    LogManager.success("GPS", String.format(Locale.US,
+                            "آخرین موقعیت ثبت‌شده در گوشی: %.5f, %.5f", loc.getLatitude(), loc.getLongitude()));
+                    processNewLocation(loc, "LastKnownCache");
+                } else {
+                    LogManager.info("GPS", "در انتظار دریافت قفل ماهواره‌ای تازه...");
+                }
+            }).addOnFailureListener(e -> {
+                LogManager.warning("GPS", "عدم امکان دریافت موقعیت اولیه: " + e.getMessage());
+            });
+        } catch (Exception e) {
+            LogManager.warning("GPS", "خطا در استعلام اولیه موقعیت: " + e.getMessage());
+        }
     }
 
     @SuppressLint("MissingPermission")
     private void startLocationUpdates() {
         try {
-            LocationRequest locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 20000)
-                    .setMinUpdateIntervalMillis(10000)
-                    .setMinUpdateDistanceMeters(10)
+            LocationRequest locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 15000)
+                    .setMinUpdateIntervalMillis(8000)
+                    .setMinUpdateDistanceMeters(0) // Stationary devices will update on timer
                     .build();
 
             fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper());
             Log.d(TAG, "Location updates requested successfully");
+            LogManager.info("GPS", "درخواست موقعیت دوره‌ای فعال شد (فاصله زمانی: ۱۵ ثانیه).");
         } catch (Exception e) {
             Log.e(TAG, "Error requesting location updates: " + e.getMessage());
+            LogManager.error("GPS", "خطا در ثبت درخواست موقعیت Fused: " + e.getMessage());
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private void setupNativeFallbackLocation() {
+        try {
+            nativeLocationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+            if (nativeLocationManager == null) return;
+
+            nativeLocationListener = new LocationListener() {
+                @Override
+                public void onLocationChanged(Location location) {
+                    if (location != null) {
+                        processNewLocation(location, "Android Native");
+                    }
+                }
+
+                @Override
+                public void onStatusChanged(String provider, int status, Bundle extras) {}
+
+                @Override
+                public void onProviderEnabled(String provider) {
+                    LogManager.info("GPS", "پرووایدر " + provider + " روشن گردید.");
+                }
+
+                @Override
+                public void onProviderDisabled(String provider) {
+                    LogManager.warning("GPS", "پرووایدر " + provider + " خاموش شد.");
+                }
+            };
+
+            // Register GPS Provider
+            if (nativeLocationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                nativeLocationManager.requestLocationUpdates(
+                        LocationManager.GPS_PROVIDER,
+                        15000,
+                        0,
+                        nativeLocationListener,
+                        Looper.getMainLooper()
+                );
+            }
+
+            // Register Network Provider (useful indoors)
+            if (nativeLocationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                nativeLocationManager.requestLocationUpdates(
+                        LocationManager.NETWORK_PROVIDER,
+                        15000,
+                        0,
+                        nativeLocationListener,
+                        Looper.getMainLooper()
+                );
+            }
+        } catch (Exception e) {
+            LogManager.warning("GPS", "خطای راه‌اندازی پرووایدر بومی اندروید: " + e.getMessage());
         }
     }
 
@@ -114,14 +218,21 @@ public class TrackingService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        LogManager.info("SERVICE", "سرویس ردیابی فراخوانی شد (START_STICKY).");
         return START_STICKY; // Auto restart if killed by OS
     }
 
     @Override
     public void onDestroy() {
         super.onDestroy();
+        LogManager.warning("SERVICE", "سرویس ردیابی پس‌زمینه متوقف گردید.");
         if (fusedLocationClient != null && locationCallback != null) {
             fusedLocationClient.removeLocationUpdates(locationCallback);
+        }
+        if (nativeLocationManager != null && nativeLocationListener != null) {
+            try {
+                nativeLocationManager.removeUpdates(nativeLocationListener);
+            } catch (Exception ignored) {}
         }
     }
 
@@ -130,3 +241,4 @@ public class TrackingService extends Service {
         return null;
     }
 }
+

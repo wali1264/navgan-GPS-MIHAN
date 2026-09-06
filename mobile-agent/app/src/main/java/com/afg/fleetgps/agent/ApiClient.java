@@ -83,36 +83,65 @@ public class ApiClient {
         return 100;
     }
 
+    public static class TelemetryResult {
+        public final boolean success;
+        public final int statusCode;
+        public final String responseBody;
+        public final String errorMessage;
+
+        public TelemetryResult(boolean success, int statusCode, String responseBody, String errorMessage) {
+            this.success = success;
+            this.statusCode = statusCode;
+            this.responseBody = responseBody;
+            this.errorMessage = errorMessage;
+        }
+    }
+
     public static boolean sendTelemetry(Context context, double lat, double lng, float speed, float bearing, double altitude) {
+        TelemetryResult res = sendTelemetryDetailed(context, lat, lng, speed, bearing, altitude);
+        return res.success;
+    }
+
+    public static TelemetryResult sendTelemetryDetailed(Context context, double lat, double lng, float speed, float bearing, double altitude) {
         try {
             String baseUrl = getServerUrl(context);
             if (baseUrl == null || baseUrl.isEmpty() || baseUrl.contains("your-fleet-server.com")) {
-                return false;
+                LogManager.warning("HTTP", "آدرس سرور هنوز تنظیم نشده است.");
+                return new TelemetryResult(false, 0, null, "آدرس سرور تنظیم نشده است");
             }
 
-            URL url = new URL(baseUrl.replaceAll("/+$", "") + "/api/mobile/telemetry");
+            String fullUrl = baseUrl.replaceAll("/+$", "") + "/api/mobile/telemetry";
+            String imei = getDeviceImei(context);
+
+            URL url = new URL(fullUrl);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json; utf-8");
             conn.setRequestProperty("Accept", "application/json");
             conn.setDoOutput(true);
-            conn.setConnectTimeout(8000);
-            conn.setReadTimeout(8000);
+            conn.setConnectTimeout(9000);
+            conn.setReadTimeout(9000);
 
             SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
             sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
             String now = sdf.format(new Date());
 
+            int speedKm = (int) (speed * 3.6f);
+            int battery = getBatteryLevel(context);
+
             JSONObject json = new JSONObject();
-            json.put("imei", getDeviceImei(context));
+            json.put("imei", imei);
             json.put("lat", lat);
             json.put("lng", lng);
-            json.put("speed", (int) (speed * 3.6f)); // Convert m/s to km/h
+            json.put("speed", speedKm);
             json.put("heading", (int) bearing);
             json.put("altitude", (int) altitude);
-            json.put("battery_level", getBatteryLevel(context));
+            json.put("battery_level", battery);
             json.put("gsm_signal", 95);
             json.put("recorded_at", now);
+
+            LogManager.info("HTTP", String.format(Locale.US, "ارسال به %s | کد: %s | مختصات: %.5f, %.5f | باتری: %d%%",
+                    fullUrl, imei, lat, lng, battery));
 
             byte[] input = json.toString().getBytes(StandardCharsets.UTF_8);
             try (OutputStream os = conn.getOutputStream()) {
@@ -120,11 +149,28 @@ public class ApiClient {
             }
 
             int code = conn.getResponseCode();
+            String responseBody = "";
+            java.io.InputStream stream = (code >= 200 && code < 400) ? conn.getInputStream() : conn.getErrorStream();
+            if (stream != null) {
+                java.util.Scanner s = new java.util.Scanner(stream, "UTF-8").useDelimiter("\\A");
+                responseBody = s.hasNext() ? s.next() : "";
+                stream.close();
+            }
+
             conn.disconnect();
-            return code >= 200 && code < 300;
+
+            if (code >= 200 && code < 300) {
+                LogManager.success("HTTP " + code, "✓ ثبت موفق در سرور و دیتابیس: " + responseBody);
+                return new TelemetryResult(true, code, responseBody, null);
+            } else {
+                LogManager.error("HTTP " + code, "خطا از سمت سرور: " + responseBody);
+                return new TelemetryResult(false, code, responseBody, "کد پاسخ: " + code);
+            }
         } catch (Exception e) {
-            Log.e(TAG, "sendTelemetry failed: " + e.getMessage());
-            return false;
+            String err = e.getClass().getSimpleName() + ": " + e.getMessage();
+            Log.e(TAG, "sendTelemetry failed: " + err);
+            LogManager.error("NETWORK", "خطای اتصال به سرور: " + err);
+            return new TelemetryResult(false, -1, null, err);
         }
     }
 

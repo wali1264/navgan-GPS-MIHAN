@@ -125,36 +125,35 @@ export class AdaptiveDbAdapter {
   private buildAdaptivePayloads(record: NormalizedGpsRecord): Record<string, any>[] {
     const timestamp = record.recorded_at || new Date().toISOString();
 
-    // Variant A: Standard schema (lat, lng, speed, heading, etc.)
+    // Variant A: Exact verified schema of user's Supabase gps_telemetry table
     const variantA: Record<string, any> = {
       device_imei: record.device_imei,
       lat: record.lat,
       lng: record.lng,
-      speed: record.speed,
-      heading: record.heading ?? 0,
-      ignition: record.ignition ?? (record.speed > 0),
-      door_status: record.door_status ?? false,
-      battery_level: record.battery_level ?? 95,
-      external_power_voltage: record.external_power_voltage ?? 13.8,
-    };
-
-    // Variant B: Full schema with latitude/longitude/recorded_at/created_at
-    const variantB: Record<string, any> = {
-      ...variantA,
-      latitude: record.lat,
-      longitude: record.lng,
-      satellites: record.satellites ?? 12,
-      altitude: record.altitude ?? 1790,
-      gsm_signal: record.gsm_signal ?? 90,
+      speed: Math.round(record.speed || 0),
+      heading: Math.round(record.heading || 0),
+      altitude: Math.round(record.altitude || 0),
+      satellites: record.satellites || 12,
+      gsm_signal: record.gsm_signal || 100,
+      ignition: Boolean(record.ignition ?? true),
+      battery_level: Math.round(record.battery_level || 100),
       recorded_at: timestamp,
     };
 
-    // Variant C: Minimal fallback schema
+    // Variant B: Minimal standard schema
+    const variantB: Record<string, any> = {
+      device_imei: record.device_imei,
+      lat: record.lat,
+      lng: record.lng,
+      speed: Math.round(record.speed || 0),
+      recorded_at: timestamp,
+    };
+
+    // Variant C: Bare coordinates fallback
     const variantC: Record<string, any> = {
       device_imei: record.device_imei,
       lat: record.lat,
       lng: record.lng,
-      speed: record.speed,
     };
 
     return [variantA, variantB, variantC];
@@ -163,15 +162,73 @@ export class AdaptiveDbAdapter {
   private async updateDeviceOnline(imei: string): Promise<void> {
     if (!this.client) return;
     try {
-      await this.client
+      // 1. Check if device exists in 'devices' table
+      const { data: existingDevice } = await this.client
         .from('devices')
-        .update({
-          is_online: true,
-          last_seen_at: new Date().toISOString(),
-        })
-        .eq('imei', imei);
-    } catch {
-      // Ignore non-blocking device status updates
+        .select('id, imei, status')
+        .eq('imei', imei)
+        .maybeSingle();
+
+      let deviceId = existingDevice?.id;
+
+      if (!existingDevice) {
+        // Auto-provision the device so it never gets orphaned
+        const { data: createdDev, error: createErr } = await this.client
+          .from('devices')
+          .insert({
+            imei: imei,
+            model_name: 'گوشی هوشمند ردیاب (Smartphone Agent)',
+            protocol: 'SMARTPHONE_AGENT',
+            device_type: 'smartphone_agent',
+            status: 'online',
+            sim_number: '',
+            sim_operator: 'Mobile Network',
+            last_online: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            created_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+
+        if (!createErr && createdDev) {
+          deviceId = createdDev.id;
+          console.log(`[AdaptiveDbAdapter] Auto-provisioned device ${imei} with ID ${deviceId}`);
+        }
+      } else {
+        // Update device online status
+        await this.client
+          .from('devices')
+          .update({
+            status: 'online',
+            last_online: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('imei', imei);
+      }
+
+      // 2. Ensure a linked vehicle exists in 'vehicles' table
+      if (deviceId) {
+        const { data: existingVeh } = await this.client
+          .from('vehicles')
+          .select('id, device_id')
+          .or(`device_id.eq.${deviceId},device_id.eq.${imei}`)
+          .maybeSingle();
+
+        if (!existingVeh) {
+          await this.client.from('vehicles').insert({
+            device_id: deviceId,
+            name: `موبایل هوشمند ${imei.slice(-6)}`,
+            plate_number: `MOB-${imei.slice(-6)}`,
+            vehicle_type: 'car',
+            is_active: true,
+            max_speed_limit: 120,
+            created_at: new Date().toISOString(),
+          });
+          console.log(`[AdaptiveDbAdapter] Auto-created vehicle for device ${imei}`);
+        }
+      }
+    } catch (e: any) {
+      console.warn('[AdaptiveDbAdapter] updateDeviceOnline error (non-fatal):', e.message);
     }
   }
 

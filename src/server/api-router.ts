@@ -409,12 +409,22 @@ apiRouter.post('/mobile/telemetry', async (req: AuthenticatedRequest, res: Respo
     };
 
     // Save to Database & Dispatch realtime event to all connected dashboard websockets
-    await AdaptiveDbAdapter.getInstance().saveTelemetry(record);
+    const saved = await AdaptiveDbAdapter.getInstance().saveTelemetry(record);
 
-    res.json({ success: true, timestamp: new Date().toISOString() });
+    res.json({
+      success: true,
+      imei: record.device_imei,
+      coordinates: { lat: record.lat, lng: record.lng },
+      speed: record.speed,
+      battery: record.battery_level,
+      saved_to_supabase: saved,
+      status: 'online',
+      message: 'موقعیت با موفقیت دریافت و در دیتابیس ثبت شد',
+      timestamp: new Date().toISOString(),
+    });
   } catch (err: any) {
     console.error('[Mobile Telemetry API Error]:', err);
-    res.status(500).json({ error: err.message || 'Internal error' });
+    res.status(500).json({ success: false, error: err.message || 'Internal error' });
   }
 });
 

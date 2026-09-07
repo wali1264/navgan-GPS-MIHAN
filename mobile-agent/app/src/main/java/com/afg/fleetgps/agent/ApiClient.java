@@ -546,18 +546,65 @@ public class ApiClient {
     /**
      * Resolves Cell Tower ID to Geographic Coordinates using compatible Geolocation APIs.
      */
+    public static Location resolveWifiLocation(java.util.List<android.net.wifi.ScanResult> scanResults) {
+        if (scanResults == null || scanResults.isEmpty()) return null;
+
+        // Sort by strongest signal (descending order)
+        java.util.Collections.sort(scanResults, (a, b) -> Integer.compare(b.level, a.level));
+
+        int attempts = Math.min(3, scanResults.size()); // Try up to 3 strongest BSSIDs
+        for (int i = 0; i < attempts; i++) {
+            String bssid = scanResults.get(i).BSSID;
+            if (bssid == null || bssid.isEmpty()) continue;
+
+            try {
+                // Free, Open-Source WiFi Geolocation API (Mylnikov)
+                String geoUrl = "https://api.mylnikov.org/geolocation/wifi?v=1.1&bssid=" + bssid;
+                URL url = new URL(geoUrl);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(4000);
+                conn.setReadTimeout(4000);
+
+                int code = conn.getResponseCode();
+                if (code == 200) {
+                    String resp = readStream(conn, code);
+                    conn.disconnect();
+                    JSONObject resJson = new JSONObject(resp);
+                    if (resJson.optInt("result", 0) == 200) {
+                        JSONObject dataObj = resJson.getJSONObject("data");
+                        double lat = dataObj.getDouble("lat");
+                        double lng = dataObj.getDouble("lon"); // lon, not lng
+                        double acc = dataObj.optDouble("range", 70.0);
+
+                        Location loc = new Location("wifi_mylnikov");
+                        loc.setLatitude(lat);
+                        loc.setLongitude(lng);
+                        loc.setAccuracy((float) acc);
+                        loc.setTime(System.currentTimeMillis());
+                        return loc;
+                    }
+                }
+                conn.disconnect();
+            } catch (Exception e) {
+                Log.w(TAG, "Mylnikov WiFi Geolocation error: " + e.getMessage());
+            }
+        }
+        return null;
+    }
+
     public static Location resolveCellLocation(Context context, CellInfoDetail cell) {
         if (cell == null || !cell.isValid()) return null;
         try {
-            // Standard multi-carrier Geolocation resolver
+            // Standard multi-carrier Geolocation resolver (Note: Mozilla MLS is shutdown)
             String geoUrl = "https://location.services.mozilla.com/v1/geolocate?key=test";
             URL url = new URL(geoUrl);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
             conn.setDoOutput(true);
-            conn.setConnectTimeout(6000);
-            conn.setReadTimeout(6000);
+            conn.setConnectTimeout(3000); // Lower timeout since it's likely dead
+            conn.setReadTimeout(3000);
 
             JSONObject body = new JSONObject();
             JSONArray cells = new JSONArray();

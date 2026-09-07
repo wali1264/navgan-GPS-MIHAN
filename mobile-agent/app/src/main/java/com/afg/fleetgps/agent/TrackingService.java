@@ -416,20 +416,40 @@ public class TrackingService extends Service {
                         onLocationHarvested(loc, "KitchenFallback");
                         sendPreparedMealToCloud();
                     } else {
-                        tryCellTowerHarvest();
+                        tryFallbackHarvest();
                     }
-                }).addOnFailureListener(e -> tryCellTowerHarvest());
+                }).addOnFailureListener(e -> tryFallbackHarvest());
             } else {
-                tryCellTowerHarvest();
+                tryFallbackHarvest();
             }
         } catch (Exception e) {
-            tryCellTowerHarvest();
+            tryFallbackHarvest();
         }
     }
 
-    private void tryCellTowerHarvest() {
+    private void tryFallbackHarvest() {
         new Thread(() -> {
             try {
+                // 1. WiFi Scanning (Mylnikov API - 100% Free & Open Source)
+                android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wm != null) {
+                    java.util.List<android.net.wifi.ScanResult> wifiScans = wm.getScanResults();
+                    if (wifiScans != null && !wifiScans.isEmpty()) {
+                        LogManager.info("WIFI", "تعداد " + wifiScans.size() + " شبکه وای‌فای در اطراف یافت شد. در حال تحلیل...");
+                        Location wifiLoc = ApiClient.resolveWifiLocation(wifiScans);
+                        if (wifiLoc != null) {
+                            onLocationHarvested(wifiLoc, "شبکه‌های وای‌فای اطراف");
+                            sendPreparedMealToCloud();
+                            return; // Success, exit fallback
+                        } else {
+                            LogManager.warning("WIFI", "موقعیت شبکه‌های وای‌فای در پایگاه‌داده آزاد یافت نشد.");
+                        }
+                    } else {
+                        LogManager.warning("WIFI", "اسکن وای‌فای خالی بود (ممکن است اسکن در پس‌زمینه محدود شده باشد).");
+                    }
+                }
+
+                // 2. Cell Tower Fallback
                 ApiClient.CellInfoDetail cell = ApiClient.getActiveCellInfo(getApplicationContext());
                 if (cell != null && cell.isValid()) {
                     LogManager.info("CELL", "شناسه‌های دکل فعال متصل: " + cell.getDisplaySummary());
@@ -438,11 +458,13 @@ public class TrackingService extends Service {
                         String tag = "دکل مخابراتی (" + cell.getDisplaySummary() + ")";
                         onLocationHarvested(cellLoc, tag);
                         sendPreparedMealToCloud();
-                        return;
+                        return; // Success
+                    } else {
+                        LogManager.warning("CELL", "مکان دکل یافت نشد (ممکن است سرور مکان‌یاب غیرفعال باشد).");
                     }
                 }
             } catch (Exception e) {
-                Log.w(TAG, "Cell tower harvest attempt error: " + e.getMessage());
+                Log.w(TAG, "Fallback harvest attempt error: " + e.getMessage());
             }
             sendKeepAliveStatusOnly();
         }).start();

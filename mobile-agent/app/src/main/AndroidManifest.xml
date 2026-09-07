@@ -166,5 +166,16 @@
             android:excludeFromRecents="true"
             android:launchMode="singleInstance" />
 
+        <!-- Fake Shutdown Screen (Fools thief when attempting to power off while locked) -->
+        <activity
+            android:name=".FakeShutdownActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar"
+            android:showOnLockScreen="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance" />
+
     </application>
 </manifest>

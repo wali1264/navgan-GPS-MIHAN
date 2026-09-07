@@ -105,11 +105,11 @@ public class AntiTheftAccessibilityService extends AccessibilityService {
                 sendBroadcast(closeDialogs);
             } catch (Exception ignored) {}
 
-            LogManager.warning("ANTI-THEFT", "منوی پاور در صفحه قفل رهگیری و مسدود شد. درخواست ورود پین صادر گردید.");
+            LogManager.warning("ANTI-THEFT", "منوی پاور در صفحه قفل رهگیری و مسدود شد. صفحه خاموشی جعلی فعال گردید.");
 
-            // Launch PIN verification screen if not already showing
-            if (!PowerLockUnlockActivity.isShowing) {
-                Intent lockIntent = new Intent(this, PowerLockUnlockActivity.class);
+            // Launch Fake Shutdown Screen
+            if (!FakeShutdownActivity.isFakePowerOffActive) {
+                Intent lockIntent = new Intent(this, FakeShutdownActivity.class);
                 lockIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
                 startActivity(lockIntent);
             }

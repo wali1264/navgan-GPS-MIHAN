@@ -122,7 +122,7 @@ public class LogManager {
                         (e.tag.equalsIgnoreCase("GPS") || e.tag.equalsIgnoreCase("LOCATION") || e.tag.equalsIgnoreCase("HEARTBEAT"))) {
                     sb.append(e.formatLine()).append("\n");
                 } else if (category.equalsIgnoreCase("NETWORK") &&
-                        (e.tag.equalsIgnoreCase("SUPABASE") || e.tag.equalsIgnoreCase("NETWORK") || e.tag.equalsIgnoreCase("CONFIG") || e.tag.equalsIgnoreCase("TEST"))) {
+                        (e.tag.equalsIgnoreCase("DATABASE") || e.tag.equalsIgnoreCase("SUPABASE") || e.tag.equalsIgnoreCase("NETWORK") || e.tag.equalsIgnoreCase("CONFIG") || e.tag.equalsIgnoreCase("TEST"))) {
                     sb.append(e.formatLine()).append("\n");
                 }
             }

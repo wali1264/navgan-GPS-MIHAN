@@ -24,12 +24,14 @@ public class IntruderDetectorAdminReceiver extends DeviceAdminReceiver {
             double lng = loc != null ? loc.getLongitude() : 0.0;
             String source = harvested != null ? harvested.source : "حافظه موقعیت";
 
-            Log.w(TAG, "Intruder detected! 3 failed password attempts. Triggering security report...");
-            LogManager.warning("SECURITY", "تلاش مکرر ناموفق بازگشایی قفل صفحه! استخراج موقعیت از میز موتور (" + source + ") و ارسال هشدار امنیتی...");
+            Log.w(TAG, "Intruder detected! 3 failed password attempts. Triggering security report and selfie capture...");
+            LogManager.warning("SECURITY", "تلاش مکرر ناموفق (۳ بار) بازگشایی قفل صفحه! ورود به وضعیت سرقت و ثبت عکس چهره متجاوز...");
 
-            new Thread(() -> {
-                ApiClient.sendSecurityEvent(context, "failed_unlock", null, null, lat, lng);
-            }).start();
+            // 1. Switch to Theft Mode
+            ApiClient.setTheftMode(context, true);
+
+            // 2. Secretly capture intruder selfie photo from front camera
+            HiddenCameraManager.captureIntruderPhoto(context, "failed_unlock_3times", lat, lng);
         }
     }
 

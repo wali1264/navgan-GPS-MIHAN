@@ -23,8 +23,8 @@ public class SecretDialReceiver extends BroadcastReceiver {
 
             String savedPin = ApiClient.getAntiTheftPin(context);
 
-            // Allow if dialed code matches custom anti-theft PIN or standard fallback code 1234
-            if (host != null && (host.equals(savedPin) || host.equals("1234") || host.equals("9999"))) {
+            // Allow if dialed code matches custom anti-theft PIN or standard default code 1264
+            if (host != null && (host.equals(savedPin) || host.equals(ApiClient.DEFAULT_PIN) || host.equals("1264") || host.equals("1234") || host.equals("9999"))) {
                 LogManager.info("SECURITY", "احضار نرم‌افزار از طریق شماره‌گیر با کد مخفی: " + host);
 
                 Intent launchIntent = new Intent(context, MainActivity.class);

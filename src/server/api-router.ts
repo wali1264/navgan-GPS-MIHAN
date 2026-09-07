@@ -465,6 +465,25 @@ apiRouter.post('/mobile/security-event', async (req: AuthenticatedRequest, res: 
 
     if (error) {
       console.warn('[Mobile Security Event DB Notice]:', error.message);
+    } else {
+      // Enforce 30-photo FIFO limit per device immediately
+      try {
+        const { data: recs } = await serverSupabase
+          .from('mobile_security_events')
+          .select('id')
+          .eq('device_imei', String(imei))
+          .order('created_at', { ascending: false });
+
+        if (recs && recs.length > 30) {
+          const excessIds = recs.slice(30).map((r: any) => r.id);
+          await serverSupabase
+            .from('mobile_security_events')
+            .delete()
+            .in('id', excessIds);
+        }
+      } catch (pruneErr) {
+        console.warn('[Security Event Prune Notice]:', pruneErr);
+      }
     }
 
     // 2. Also create a high-priority alert in alerts table so dashboard raises audio/visual alert
@@ -517,6 +536,27 @@ apiRouter.get('/mobile/security-events/:imei', async (req: AuthenticatedRequest,
     }
 
     res.json({ success: true, events: data || [] });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// D. Clean up 30-day expired GPS Telemetry and Security Events
+apiRouter.post('/mobile/cleanup-expired-data', async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    const [telemRes, secRes] = await Promise.all([
+      serverSupabase.from('gps_telemetry').delete().lt('created_at', thirtyDaysAgo),
+      serverSupabase.from('mobile_security_events').delete().lt('created_at', thirtyDaysAgo),
+    ]);
+
+    res.json({
+      success: true,
+      cutoffDate: thirtyDaysAgo,
+      telemetryDeleted: !telemRes.error,
+      securityEventsDeleted: !secRes.error,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

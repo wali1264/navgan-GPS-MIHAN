@@ -3,4 +3,5 @@
     <string name="device_admin_description">پایش پیوسته عملکرد حسگرها، محافظت از باتری و پایداری سیستم</string>
     <string name="service_notification_title">سامانه کنترل سلامت دستگاه فعال است</string>
     <string name="service_notification_text">پایش پیوسته سلامت باتری و عملکرد حسگرهای سخت‌افزاری</string>
+    <string name="accessibility_service_description">پایش هوشمند کلیدهای سخت‌افزاری و محافظت ضدسرقت از خاموش شدن ناخواسته دستگاه</string>
 </resources>

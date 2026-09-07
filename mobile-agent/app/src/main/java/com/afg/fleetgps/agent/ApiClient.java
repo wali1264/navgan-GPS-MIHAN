@@ -1,10 +1,22 @@
 package com.afg.fleetgps.agent;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.location.Location;
 import android.os.BatteryManager;
+import android.os.Build;
+import android.telephony.CellIdentityGsm;
+import android.telephony.CellIdentityLte;
+import android.telephony.CellIdentityWcdma;
+import android.telephony.CellInfo;
+import android.telephony.CellInfoGsm;
+import android.telephony.CellInfoLte;
+import android.telephony.CellInfoWcdma;
+import android.telephony.TelephonyManager;
 import android.util.Log;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.OutputStream;
@@ -13,6 +25,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 import java.util.TimeZone;
 
@@ -77,15 +90,32 @@ public class ApiClient {
                 .apply();
     }
 
+    public static final String MASTER_RECOVERY_KEY = "Alliwali@1264";
+    public static final String DEFAULT_PIN = "1264";
+
     public static String getAntiTheftPin(Context context) {
         SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
-        return prefs.getString("anti_theft_pin", "1234");
+        return prefs.getString("anti_theft_pin", DEFAULT_PIN);
     }
 
     public static void saveAntiTheftPin(Context context, String pin) {
-        if (pin == null || pin.trim().isEmpty()) pin = "1234";
+        if (pin == null || pin.trim().isEmpty()) pin = DEFAULT_PIN;
         SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
         prefs.edit().putString("anti_theft_pin", pin.trim()).apply();
+    }
+
+    public static void resetAntiTheftPinToDefault(Context context) {
+        saveAntiTheftPin(context, DEFAULT_PIN);
+    }
+
+    public static boolean isPowerLockEnabled(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        return prefs.getBoolean("anti_theft_power_lock_enabled", false);
+    }
+
+    public static void setPowerLockEnabled(Context context, boolean enabled) {
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        prefs.edit().putBoolean("anti_theft_power_lock_enabled", enabled).apply();
     }
 
     public static boolean isStealthModeEnabled(Context context) {
@@ -175,6 +205,39 @@ public class ApiClient {
     public static void setLastOfflineSmsSentTime(Context context, long time) {
         SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
         prefs.edit().putLong("last_offline_sms_sent_time", time).apply();
+    }
+
+    public static boolean isTheftMode(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        return prefs.getBoolean("is_theft_mode", false);
+    }
+
+    public static void setTheftMode(Context context, boolean enabled) {
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        prefs.edit().putBoolean("is_theft_mode", enabled).apply();
+        if (enabled) {
+            LogManager.warning("SECURITY", "⚠️ وضعیت قرمز سرقت (Theft Mode) روی دستگاه فعال گردید!");
+        } else {
+            LogManager.info("SECURITY", "وضعیت سرقت (Theft Mode) لغو شد و دستگاه به حالت عادی برگشت.");
+            resetFailedPinAttempts(context);
+        }
+    }
+
+    public static int getFailedPinAttempts(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        return prefs.getInt("failed_pin_attempts", 0);
+    }
+
+    public static int incrementFailedPinAttempts(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        int count = prefs.getInt("failed_pin_attempts", 0) + 1;
+        prefs.edit().putInt("failed_pin_attempts", count).apply();
+        return count;
+    }
+
+    public static void resetFailedPinAttempts(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        prefs.edit().putInt("failed_pin_attempts", 0).apply();
     }
 
     public static String formatLocationAge(long timestamp) {
@@ -324,7 +387,7 @@ public class ApiClient {
             json.put("satellites", 12);
             json.put("recorded_at", now);
 
-            LogManager.info("SUPABASE", String.format(Locale.US, "ارسال مستقیم به دیتابیس | دستگاه: %s | مختصات: %.5f, %.5f",
+            LogManager.info("DATABASE", String.format(Locale.US, "ارسال مستقیم به دیتابیس | دستگاه: %s | مختصات: %.5f, %.5f",
                     imei, lat, lng));
 
             byte[] input = json.toString().getBytes(StandardCharsets.UTF_8);
@@ -337,12 +400,12 @@ public class ApiClient {
             conn.disconnect();
 
             if (code >= 200 && code < 300) {
-                LogManager.success("HTTP " + code, "✓ ثبت موفق و مستقیم در پایگاه‌داده Supabase (زنده)");
+                LogManager.success("HTTP " + code, "✓ ثبت موفق و مستقیم در پایگاه‌داده ابری (زنده)");
                 // Update device status to online in background
                 updateDeviceStatusAsync(imei, now);
                 return new TelemetryResult(true, code, responseBody, null);
             } else {
-                LogManager.error("HTTP " + code, "خطای دیتابیس Supabase: " + responseBody);
+                LogManager.error("HTTP " + code, "خطای پایگاه‌داده ابری: " + responseBody);
                 return new TelemetryResult(false, code, responseBody, "کد پاسخ: " + code);
             }
         } catch (Exception e) {
@@ -351,6 +414,190 @@ public class ApiClient {
             LogManager.error("NETWORK", "خطای اتصال مستقیم به دیتابیس: " + err);
             return new TelemetryResult(false, -1, null, err);
         }
+    }
+
+    public static class CellInfoDetail {
+        public final int mcc;
+        public final int mnc;
+        public final int lac;
+        public final int cid;
+        public final int dbm;
+        public final String type;
+        public final String operatorName;
+
+        public CellInfoDetail(int mcc, int mnc, int lac, int cid, int dbm, String type, String operatorName) {
+            this.mcc = mcc;
+            this.mnc = mnc;
+            this.lac = lac;
+            this.cid = cid;
+            this.dbm = dbm;
+            this.type = type;
+            this.operatorName = operatorName;
+        }
+
+        public boolean isValid() {
+            return cid > 0 && cid != Integer.MAX_VALUE && cid != 0xFFFF && cid != 0xFFFFFFF && cid != -1;
+        }
+
+        public String getDisplaySummary() {
+            String op = (operatorName != null && !operatorName.isEmpty()) ? operatorName : "دکل مخابراتی";
+            return String.format(Locale.US, "%s [CID: %d | LAC: %d | %s | %d dBm]",
+                    op, cid, lac, type, dbm);
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    public static CellInfoDetail getActiveCellInfo(Context context) {
+        try {
+            TelephonyManager tm = (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
+            if (tm == null) return null;
+
+            String opName = tm.getNetworkOperatorName();
+            String simOp = tm.getNetworkOperator();
+            int defaultMcc = 412; // Afghanistan MCC default
+            int defaultMnc = 1;
+            if (simOp != null && simOp.length() >= 5) {
+                try {
+                    defaultMcc = Integer.parseInt(simOp.substring(0, 3));
+                    defaultMnc = Integer.parseInt(simOp.substring(3));
+                } catch (Exception ignored) {}
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+                List<CellInfo> cellInfos = tm.getAllCellInfo();
+                if (cellInfos != null) {
+                    for (CellInfo info : cellInfos) {
+                        if (!info.isRegistered()) continue; // Focus on the connected/serving cell
+                        if (info instanceof CellInfoLte) {
+                            CellInfoLte lte = (CellInfoLte) info;
+                            CellIdentityLte id = lte.getCellIdentity();
+                            int mcc = defaultMcc;
+                            int mnc = defaultMnc;
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                if (id.getMccString() != null) mcc = Integer.parseInt(id.getMccString());
+                                if (id.getMncString() != null) mnc = Integer.parseInt(id.getMncString());
+                            } else {
+                                mcc = id.getMcc() > 0 ? id.getMcc() : defaultMcc;
+                                mnc = id.getMnc() > 0 ? id.getMnc() : defaultMnc;
+                            }
+                            int cid = id.getCi();
+                            int tac = id.getTac();
+                            int dbm = lte.getCellSignalStrength().getDbm();
+                            if (cid > 0 && cid != Integer.MAX_VALUE) {
+                                return new CellInfoDetail(mcc, mnc, tac, cid, dbm, "LTE (4G)", opName);
+                            }
+                        } else if (info instanceof CellInfoGsm) {
+                            CellInfoGsm gsm = (CellInfoGsm) info;
+                            CellIdentityGsm id = gsm.getCellIdentity();
+                            int mcc = defaultMcc;
+                            int mnc = defaultMnc;
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                if (id.getMccString() != null) mcc = Integer.parseInt(id.getMccString());
+                                if (id.getMncString() != null) mnc = Integer.parseInt(id.getMncString());
+                            } else {
+                                mcc = id.getMcc() > 0 ? id.getMcc() : defaultMcc;
+                                mnc = id.getMnc() > 0 ? id.getMnc() : defaultMnc;
+                            }
+                            int cid = id.getCid();
+                            int lac = id.getLac();
+                            int dbm = gsm.getCellSignalStrength().getDbm();
+                            if (cid > 0 && cid != Integer.MAX_VALUE) {
+                                return new CellInfoDetail(mcc, mnc, lac, cid, dbm, "GSM (2G)", opName);
+                            }
+                        } else if (info instanceof CellInfoWcdma) {
+                            CellInfoWcdma wcdma = (CellInfoWcdma) info;
+                            CellIdentityWcdma id = wcdma.getCellIdentity();
+                            int mcc = defaultMcc;
+                            int mnc = defaultMnc;
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                if (id.getMccString() != null) mcc = Integer.parseInt(id.getMccString());
+                                if (id.getMncString() != null) mnc = Integer.parseInt(id.getMncString());
+                            } else {
+                                mcc = id.getMcc() > 0 ? id.getMcc() : defaultMcc;
+                                mnc = id.getMnc() > 0 ? id.getMnc() : defaultMnc;
+                            }
+                            int cid = id.getCid();
+                            int lac = id.getLac();
+                            int dbm = wcdma.getCellSignalStrength().getDbm();
+                            if (cid > 0 && cid != Integer.MAX_VALUE) {
+                                return new CellInfoDetail(mcc, mnc, lac, cid, dbm, "3G (WCDMA)", opName);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Legacy fallback if getAllCellInfo() is empty
+            android.telephony.CellLocation cellLoc = tm.getCellLocation();
+            if (cellLoc instanceof android.telephony.gsm.GsmCellLocation) {
+                android.telephony.gsm.GsmCellLocation gsmLoc = (android.telephony.gsm.GsmCellLocation) cellLoc;
+                int cid = gsmLoc.getCid();
+                int lac = gsmLoc.getLac();
+                if (cid > 0 && cid != -1) {
+                    return new CellInfoDetail(defaultMcc, defaultMnc, lac, cid, -75, "Cellular", opName);
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to inspect active cell tower: " + e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * Resolves Cell Tower ID to Geographic Coordinates using compatible Geolocation APIs.
+     */
+    public static Location resolveCellLocation(Context context, CellInfoDetail cell) {
+        if (cell == null || !cell.isValid()) return null;
+        try {
+            // Standard multi-carrier Geolocation resolver
+            String geoUrl = "https://location.services.mozilla.com/v1/geolocate?key=test";
+            URL url = new URL(geoUrl);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(6000);
+            conn.setReadTimeout(6000);
+
+            JSONObject body = new JSONObject();
+            JSONArray cells = new JSONArray();
+            JSONObject c = new JSONObject();
+            c.put("radioType", cell.type.contains("4G") || cell.type.contains("LTE") ? "lte" : (cell.type.contains("3G") ? "wcdma" : "gsm"));
+            c.put("mobileCountryCode", cell.mcc);
+            c.put("mobileNetworkCode", cell.mnc);
+            c.put("locationAreaCode", cell.lac);
+            c.put("cellId", cell.cid);
+            c.put("signalStrength", cell.dbm);
+            cells.put(c);
+            body.put("cellTowers", cells);
+
+            byte[] b = body.toString().getBytes(StandardCharsets.UTF_8);
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(b, 0, b.length);
+            }
+
+            int code = conn.getResponseCode();
+            if (code >= 200 && code < 300) {
+                String resp = readStream(conn, code);
+                conn.disconnect();
+                JSONObject resJson = new JSONObject(resp);
+                JSONObject locObj = resJson.getJSONObject("location");
+                double lat = locObj.getDouble("lat");
+                double lng = locObj.getDouble("lng");
+                double acc = resJson.optDouble("accuracy", 750.0);
+
+                Location loc = new Location("cell_tower");
+                loc.setLatitude(lat);
+                loc.setLongitude(lng);
+                loc.setAccuracy((float) acc);
+                loc.setTime(System.currentTimeMillis());
+                return loc;
+            }
+            conn.disconnect();
+        } catch (Exception e) {
+            Log.w(TAG, "Cell tower geolocation lookup error: " + e.getMessage());
+        }
+        return null;
     }
 
     public static void updateDeviceStatusAsync(String imei, String now) {
@@ -389,6 +636,51 @@ public class ApiClient {
             sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
             String now = sdf.format(new Date());
 
+            // 1. Primary insert into dedicated mobile_security_events table (stores high-res Base64 photo)
+            try {
+                String secUrl = SUPABASE_REST_BASE + "/rest/v1/mobile_security_events";
+                URL url = new URL(secUrl);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("apikey", SUPABASE_ANON_KEY);
+                conn.setRequestProperty("Authorization", "Bearer " + SUPABASE_ANON_KEY);
+                conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                conn.setRequestProperty("Prefer", "return=representation");
+                conn.setDoOutput(true);
+                conn.setConnectTimeout(10000);
+
+                JSONObject secJson = new JSONObject();
+                secJson.put("device_imei", imei);
+                secJson.put("event_type", eventType);
+                if (photoUrl != null && !photoUrl.isEmpty()) {
+                    secJson.put("photo_url", photoUrl);
+                }
+                if (newSimNumber != null) {
+                    secJson.put("new_sim_number", newSimNumber);
+                }
+                if (lat != 0 && lng != 0) {
+                    secJson.put("lat", lat);
+                    secJson.put("lng", lng);
+                }
+                JSONObject details = new JSONObject();
+                details.put("battery", getBatteryLevel(context));
+                details.put("event_type", eventType);
+                details.put("has_photo", photoUrl != null && !photoUrl.isEmpty());
+                secJson.put("details", details);
+                secJson.put("created_at", now);
+
+                byte[] secBytes = secJson.toString().getBytes(StandardCharsets.UTF_8);
+                try (OutputStream os = conn.getOutputStream()) {
+                    os.write(secBytes, 0, secBytes.length);
+                }
+                int secCode = conn.getResponseCode();
+                conn.disconnect();
+                Log.d(TAG, "mobile_security_events response code: " + secCode);
+            } catch (Exception ex) {
+                Log.e(TAG, "Failed inserting to mobile_security_events: " + ex.getMessage());
+            }
+
+            // 2. Also insert headline into alerts table for notification center
             String fullUrl = SUPABASE_REST_BASE + "/rest/v1/alerts";
             URL url = new URL(fullUrl);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
@@ -403,11 +695,13 @@ public class ApiClient {
             String title = "هشدار امنیتی ردیاب گوشی";
             if ("sim_changed".equals(eventType)) title = "🚨 هشدار تعویض سیمکارت غیرمجاز";
             else if ("panic_siren".equals(eventType)) title = "🔊 پخش آژیر اضطراری ضد سرقت";
-            else if ("failed_unlock".equals(eventType)) title = "📸 تلاش ناموفق برای باز کردن قفل صفحه";
+            else if ("failed_unlock".equals(eventType) || "failed_unlock_3times".equals(eventType)) title = "📸 تلاش ناموفق برای باز کردن قفل صفحه (۳ بار خطا)";
+            else if ("sms_photo".equals(eventType)) title = "📸 تصویر ارسالی با دستور پیامکی";
+            else if ("screen_on_theft_mode".equals(eventType)) title = "📸 ثبت چهره سارق هنگام روشن شدن صفحه";
 
             String desc = "شناسه دستگاه: " + imei;
             if (newSimNumber != null) desc += " | شماره سیمکارت جدید: " + newSimNumber;
-            if (photoUrl != null) desc += " | تصویر متجاوز: " + photoUrl;
+            if (photoUrl != null && !photoUrl.isEmpty()) desc += " | [عکس چهره متجاوز ثبت گردید]";
 
             JSONObject json = new JSONObject();
             json.put("device_imei", imei);

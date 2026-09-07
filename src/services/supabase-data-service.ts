@@ -912,6 +912,48 @@ export class SupabaseDataService {
   }
 
   /**
+   * Fetch Mobile Security Events (Intruder Photos, SIM Changes, Siren Triggers)
+   * Enforces a maximum limit of 30 items per query
+   */
+  public async getMobileSecurityEvents(deviceImei?: string): Promise<any[]> {
+    try {
+      let query = supabase
+        .from('mobile_security_events')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(30);
+
+      if (deviceImei) {
+        query = query.eq('device_imei', deviceImei);
+      }
+
+      const { data, error } = await query;
+      if (error || !data) {
+        console.warn('[Supabase Data] getMobileSecurityEvents error:', error?.message);
+        return [];
+      }
+      return data;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Delete a single security photo / event
+   */
+  public async deleteSecurityEvent(id: number | string): Promise<boolean> {
+    try {
+      const { error } = await supabase
+        .from('mobile_security_events')
+        .delete()
+        .eq('id', id);
+      return !error;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Helper to format relative Persian time string
    */
   public formatRelativeTime(dateString?: string): string {

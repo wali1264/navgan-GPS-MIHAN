@@ -10,6 +10,7 @@ import { FleetMap } from '../map/FleetMap';
 import { TripHistoryView, TripHistoryFilter } from '../history/TripHistoryView';
 import { CustomerGeofenceEditor } from '../geofences/CustomerGeofenceEditor';
 import { GeofenceEngine } from '../../services/geofence-engine';
+import { globalSupabaseDataService } from '../../services/supabase-data-service';
 import {
   Car,
   MapPin,
@@ -28,6 +29,14 @@ import {
   Clock,
   Gauge,
   AlertTriangle,
+  Camera,
+  Trash2,
+  RefreshCw,
+  ExternalLink,
+  BatteryCharging,
+  ShieldCheck,
+  Eye,
+  ZoomIn,
 } from 'lucide-react';
 import { VehicleStatus, EventType, EventSeverity } from '../../shared/types/enums';
 
@@ -76,6 +85,44 @@ export const CustomerMobileView: React.FC<CustomerMobileViewProps> = ({
   const [isGeofenceAccordionOpen, setIsGeofenceAccordionOpen] = useState(false);
   const [toastAlert, setToastAlert] = useState<{ id: string; title: string; vehiclePlate: string; text: string } | null>(null);
   const [localAlerts, setLocalAlerts] = useState<FleetEvent[]>(events);
+
+  // Anti-Theft Intruder Photos Gallery State
+  const [isPhotoModalOpen, setIsPhotoModalOpen] = useState(false);
+  const [securityPhotos, setSecurityPhotos] = useState<any[]>([]);
+  const [isLoadingPhotos, setIsLoadingPhotos] = useState(false);
+  const [selectedPhotoPreview, setSelectedPhotoPreview] = useState<any | null>(null);
+  const [photoImeiFilter, setPhotoImeiFilter] = useState<string>('');
+
+  const fetchSecurityPhotos = async (imei?: string) => {
+    setIsLoadingPhotos(true);
+    try {
+      const data = await globalSupabaseDataService.getMobileSecurityEvents(imei || photoImeiFilter || undefined);
+      setSecurityPhotos(data);
+    } catch (err) {
+      console.error('Failed fetching security photos:', err);
+    } finally {
+      setIsLoadingPhotos(false);
+    }
+  };
+
+  const handleDeletePhoto = async (id: number | string) => {
+    if (!window.confirm('آیا از حذف این تصویر و رویداد امنیتی از سامانه اطمینان دارید؟')) return;
+    try {
+      const ok = await globalSupabaseDataService.deleteSecurityEvent(id);
+      if (ok) {
+        setSecurityPhotos((prev) => prev.filter((p) => p.id !== id));
+        if (selectedPhotoPreview?.id === id) {
+          setSelectedPhotoPreview(null);
+        }
+      }
+    } catch (err) {
+      console.error('Failed deleting photo:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchSecurityPhotos();
+  }, [photoImeiFilter]);
 
   // Keep localAlerts synced with incoming events
   useEffect(() => {
@@ -414,6 +461,24 @@ export const CustomerMobileView: React.FC<CustomerMobileViewProps> = ({
             </div>
           </div>
 
+          {/* Intruder Photos Quick Gallery Button */}
+          <button
+            onClick={() => {
+              setIsPhotoModalOpen(true);
+              fetchSecurityPhotos();
+            }}
+            className="relative p-1.5 px-2.5 rounded-lg border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center gap-1.5 transition shadow-xs cursor-pointer active:scale-95"
+            title="تصاویر چهره سارق و امنیت دستگاه"
+          >
+            <Camera className="w-3.5 h-3.5 text-indigo-600" />
+            <span className="hidden sm:inline text-[11px]">عکس‌های سارق</span>
+            {securityPhotos.length > 0 && (
+              <span className="bg-indigo-600 text-white font-mono font-bold text-[10px] px-1.5 py-0.2 rounded-full shadow-xs">
+                {securityPhotos.length}
+              </span>
+            )}
+          </button>
+
           {/* Compact Notification Bell Icon */}
           <button
             onClick={() => setIsAlertModalOpen(!isAlertModalOpen)}
@@ -560,27 +625,43 @@ export const CustomerMobileView: React.FC<CustomerMobileViewProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between border-t border-slate-100 pt-2 text-xs">
-                      <button
-                        onClick={() => {
-                          onSelectVehicle(v.id);
-                          setActiveTab('map');
-                        }}
-                        className="px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg font-bold flex items-center gap-1 transition cursor-pointer"
-                      >
-                        <MapPin className="w-3.5 h-3.5" />
-                        <span>ردیابی زنده</span>
-                      </button>
+                    <div className="flex flex-wrap items-center justify-between gap-1.5 border-t border-slate-100 pt-2 text-xs">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => {
+                            onSelectVehicle(v.id);
+                            setActiveTab('map');
+                          }}
+                          className="px-2.5 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg font-bold flex items-center gap-1 transition cursor-pointer"
+                        >
+                          <MapPin className="w-3.5 h-3.5" />
+                          <span>ردیابی زنده</span>
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            setHistoryVehicleId(v.id);
+                            setActiveTab('history');
+                          }}
+                          className="px-2.5 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg font-bold flex items-center gap-1 transition cursor-pointer"
+                        >
+                          <History className="w-3.5 h-3.5" />
+                          <span>تاریخچه</span>
+                        </button>
+                      </div>
 
                       <button
                         onClick={() => {
-                          setHistoryVehicleId(v.id);
-                          setActiveTab('history');
+                          const imei = (v as any).deviceId || (v as any).imei || '';
+                          setPhotoImeiFilter(imei);
+                          setIsPhotoModalOpen(true);
+                          fetchSecurityPhotos(imei);
                         }}
-                        className="px-3 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg font-bold flex items-center gap-1 transition cursor-pointer"
+                        className="px-2.5 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg font-bold flex items-center gap-1 transition cursor-pointer"
+                        title="تصاویر چهره متجاوز و رویدادهای ضدسرقت"
                       >
-                        <History className="w-3.5 h-3.5" />
-                        <span>تاریخچه ۳۰ روز</span>
+                        <Camera className="w-3.5 h-3.5" />
+                        <span>عکس سارق</span>
                       </button>
                     </div>
                   </div>
@@ -837,6 +918,295 @@ export const CustomerMobileView: React.FC<CustomerMobileViewProps> = ({
               >
                 بستن
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Intruder Photos Gallery Modal */}
+      {isPhotoModalOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-[9999] flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
+          <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] text-right" dir="rtl">
+            {/* Modal Header */}
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+                  <Camera className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900">گالری تصاویر سارق و هشدارهای امنیتی</h3>
+                  <p className="text-[11px] text-slate-500">
+                    عکس‌های مخفیانه دوربین سلفی در وضعیت بحرانی سرقت (سقف ۳۰ تصویر)
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => fetchSecurityPhotos()}
+                  className="p-2 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 transition cursor-pointer"
+                  title="تازه‌سازی تصاویر"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isLoadingPhotos ? 'animate-spin text-indigo-600' : ''}`} />
+                </button>
+                <button
+                  onClick={() => setIsPhotoModalOpen(false)}
+                  className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Filter & Policy Bar */}
+            <div className="px-4 py-2.5 bg-slate-100/80 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-600 font-medium text-[11px]">فیلتر دستگاه:</span>
+                <select
+                  value={photoImeiFilter}
+                  onChange={(e) => {
+                    setPhotoImeiFilter(e.target.value);
+                  }}
+                  className="bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="">همه دستگاه‌ها ({securityPhotos.length} رویداد)</option>
+                  {activeVehicles.map((v) => {
+                    const imei = (v as any).deviceId || (v as any).imei || '';
+                    return (
+                      <option key={v.id} value={imei}>
+                        {v.plateNumber} ({v.vehicleName})
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1.5 text-[11px] text-indigo-700 font-medium bg-indigo-50 px-2.5 py-1 rounded-md border border-indigo-100">
+                <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                <span>نگهداری هوشمند: حداکثر ۳۰ عکس FIFO | ۳۰ روز ماندگاری</span>
+              </div>
+            </div>
+
+            {/* Gallery Grid Content */}
+            <div className="p-3 sm:p-4 overflow-y-auto flex-1 divide-y divide-slate-100 space-y-3">
+              {isLoadingPhotos && securityPhotos.length === 0 ? (
+                <div className="py-16 text-center space-y-2">
+                  <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin mx-auto" />
+                  <p className="text-xs font-bold text-slate-700">در حال فراخوانی تصاویر و رویدادهای امنیتی...</p>
+                </div>
+              ) : securityPhotos.length === 0 ? (
+                <div className="py-16 text-center space-y-3">
+                  <div className="w-14 h-14 rounded-2xl bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
+                    <Camera className="w-7 h-7" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm font-bold text-slate-800">تاکنون هیچ عکس سارقی ثبت نشده است</p>
+                    <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
+                      دوربین سلفی تنها در شرایط امنیتی (۳ بار رمز اشتباه، تعویض سیمکارت، دستور پیامکی PHOTO یا پخش آژیر) به صورت کاملاً مخفی فعال شده و عکس چهره را اینجا مخابره می‌کند.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  {securityPhotos.map((photo) => {
+                    const isPhotoAvailable = photo.photo_url && photo.photo_url.startsWith('data:image');
+                    const eventType = photo.event_type || 'unknown';
+
+                    let badgeColor = 'bg-rose-50 text-rose-700 border-rose-200';
+                    let eventTitle = '📸 هشدار امنیتی ضدسرقت';
+
+                    if (eventType === 'failed_unlock_3times' || eventType === 'failed_unlock') {
+                      badgeColor = 'bg-rose-50 text-rose-700 border-rose-200';
+                      eventTitle = '📸 تلاش ناموفق بازگشایی قفل (۳ بار خطا)';
+                    } else if (eventType === 'sim_changed') {
+                      badgeColor = 'bg-amber-50 text-amber-800 border-amber-200';
+                      eventTitle = '🚨 تعویض غیرمجاز سیم‌کارت';
+                    } else if (eventType === 'panic_siren') {
+                      badgeColor = 'bg-purple-50 text-purple-700 border-purple-200';
+                      eventTitle = '🔊 پخش آژیر اضطراری و استروب';
+                    } else if (eventType === 'screen_on_theft_mode') {
+                      badgeColor = 'bg-red-50 text-red-700 border-red-200';
+                      eventTitle = '📸 روشن شدن صفحه در وضعیت سرقت';
+                    } else if (eventType === 'sms_photo') {
+                      badgeColor = 'bg-blue-50 text-blue-700 border-blue-200';
+                      eventTitle = '📸 تصویر ارسالی با دستور پیامک';
+                    } else if (eventType === 'sms_loc_request') {
+                      badgeColor = 'bg-indigo-50 text-indigo-700 border-indigo-200';
+                      eventTitle = '📍 عکس مخفی هنگام استعلام موقعیت';
+                    }
+
+                    const battery = photo.details?.battery;
+
+                    return (
+                      <div
+                        key={photo.id}
+                        className="bg-white rounded-xl border border-slate-200 p-3 flex flex-col justify-between space-y-2.5 shadow-xs hover:border-indigo-200 transition"
+                      >
+                        {/* Event Header & Delete */}
+                        <div className="flex items-start justify-between gap-1.5">
+                          <span className={`px-2 py-0.5 rounded-md text-[11px] font-bold border ${badgeColor}`}>
+                            {eventTitle}
+                          </span>
+                          <button
+                            onClick={() => handleDeletePhoto(photo.id)}
+                            className="text-slate-400 hover:text-rose-600 p-1 rounded-md hover:bg-rose-50 transition cursor-pointer"
+                            title="حذف از سامانه"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        {/* Photo Display or Fallback */}
+                        {isPhotoAvailable ? (
+                          <div
+                            onClick={() => setSelectedPhotoPreview(photo)}
+                            className="relative group rounded-lg overflow-hidden border border-slate-200 bg-slate-900 cursor-pointer aspect-4/3 flex items-center justify-center shadow-inner"
+                          >
+                            <img
+                              src={photo.photo_url}
+                              alt="چهره متجاوز"
+                              className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                              loading="lazy"
+                            />
+                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-white gap-1.5 text-xs font-bold">
+                              <ZoomIn className="w-4 h-4" />
+                              <span>مشاهده تصویر بزرگ</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-center space-y-1">
+                            <ShieldAlert className="w-6 h-6 text-slate-400 mx-auto" />
+                            <p className="text-[11px] text-slate-500">تصویری ضمیمه این رویداد نیست</p>
+                          </div>
+                        )}
+
+                        {/* Metadata Details */}
+                        <div className="text-[11px] space-y-1 text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                          <div className="flex items-center justify-between">
+                            <span>شناسه دستگاه:</span>
+                            <span className="font-mono font-bold text-slate-800">{photo.device_imei}</span>
+                          </div>
+
+                          {photo.new_sim_number && (
+                            <div className="flex items-center justify-between text-amber-700">
+                              <span>سیم‌کارت سارق:</span>
+                              <span className="font-mono font-bold">{photo.new_sim_number}</span>
+                            </div>
+                          )}
+
+                          <div className="flex items-center justify-between">
+                            <span>زمان ثبت:</span>
+                            <span className="font-mono text-[10px] text-slate-500">
+                              {new Date(photo.created_at).toLocaleString('fa-AF')}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between pt-1 border-t border-slate-200/60">
+                            {battery !== undefined ? (
+                              <span className="flex items-center gap-1 text-slate-700">
+                                <BatteryCharging className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>{battery}%</span>
+                              </span>
+                            ) : (
+                              <span></span>
+                            )}
+
+                            {photo.lat && photo.lng ? (
+                              <a
+                                href={`https://maps.google.com/?q=${photo.lat},${photo.lng}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="flex items-center gap-1 text-blue-600 hover:text-blue-800 font-bold hover:underline"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                                <span>مشاهده مکان روی نقشه</span>
+                              </a>
+                            ) : (
+                              <span className="text-slate-400 text-[10px]">موقعیت در دسترس نیست</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3 border-t border-slate-100 bg-slate-50 flex items-center justify-between">
+              <span className="text-[11px] text-slate-500">
+                مجموع: {securityPhotos.length} رویداد ذخیره‌شده
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsPhotoModalOpen(false)}
+                className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold transition cursor-pointer"
+              >
+                بستن
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* High-Resolution Zoom Lightbox */}
+      {selectedPhotoPreview && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-[10000] flex items-center justify-center p-3 animate-in fade-in duration-150">
+          <div className="relative max-w-2xl w-full bg-slate-900 rounded-2xl overflow-hidden border border-slate-700 shadow-2xl flex flex-col">
+            {/* Top Lightbox Bar */}
+            <div className="p-3 bg-slate-950/80 border-b border-slate-800 flex items-center justify-between text-white text-xs px-4" dir="rtl">
+              <div className="flex items-center gap-2">
+                <Camera className="w-4 h-4 text-indigo-400" />
+                <span className="font-bold">نمای باکیفیت چهره متجاوز</span>
+                <span className="text-slate-400 font-mono text-[10px]">
+                  ({new Date(selectedPhotoPreview.created_at).toLocaleTimeString('fa-AF')})
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  href={selectedPhotoPreview.photo_url}
+                  download={`intruder_${selectedPhotoPreview.device_imei}_${Date.now()}.jpg`}
+                  className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-xs font-bold transition flex items-center gap-1"
+                >
+                  ذخیره عکس
+                </a>
+                <button
+                  onClick={() => setSelectedPhotoPreview(null)}
+                  className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Image Preview Canvas */}
+            <div className="p-2 flex items-center justify-center bg-black/60 max-h-[75vh] overflow-hidden">
+              <img
+                src={selectedPhotoPreview.photo_url}
+                alt="تصویر چهره سارق"
+                className="max-h-[70vh] w-auto max-w-full rounded-lg object-contain shadow-2xl"
+              />
+            </div>
+
+            {/* Bottom info Bar */}
+            <div className="p-3 bg-slate-950 text-slate-300 text-xs flex flex-wrap items-center justify-between gap-2 px-4" dir="rtl">
+              <div className="flex items-center gap-3">
+                <span>دستگاه: <strong className="font-mono text-white">{selectedPhotoPreview.device_imei}</strong></span>
+                {selectedPhotoPreview.details?.battery !== undefined && (
+                  <span>شارژ: <strong className="text-emerald-400">{selectedPhotoPreview.details.battery}%</strong></span>
+                )}
+              </div>
+              {selectedPhotoPreview.lat && selectedPhotoPreview.lng && (
+                <a
+                  href={`https://maps.google.com/?q=${selectedPhotoPreview.lat},${selectedPhotoPreview.lng}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-blue-400 hover:text-blue-300 font-bold flex items-center gap-1 hover:underline"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>مختصات ثبت عکس روی نقشه گوگل</span>
+                </a>
+              )}
             </div>
           </div>
         </div>

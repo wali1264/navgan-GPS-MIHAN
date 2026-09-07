@@ -1,6 +1,7 @@
 package com.afg.fleetgps.agent;
 
 import android.annotation.SuppressLint;
+import android.app.AlarmManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -16,6 +17,8 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
+import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.core.app.NotificationCompat;
@@ -38,7 +41,9 @@ public class TrackingService extends Service {
     private static final int NOTIFICATION_ID = 1001;
 
     public static final String ACTION_RELOAD_INTERVALS = "com.afg.fleetgps.RELOAD_INTERVALS";
+    public static final String ACTION_ALARM_HEARTBEAT = "com.afg.fleetgps.ALARM_HEARTBEAT";
 
+    private PowerManager.WakeLock wakeLock;
     private FusedLocationProviderClient fusedLocationClient;
     private LocationCallback locationCallback;
     private LocationManager nativeLocationManager;
@@ -48,6 +53,8 @@ public class TrackingService extends Service {
     private Runnable offlineMonitorRunnable;
     private Handler telemetryHandler;
     private Runnable telemetryRunnable;
+    private BroadcastReceiver screenReceiver;
+    private long lastScreenOnCaptureTime = 0;
 
     public static class HarvestedLocation {
         public final Location location;
@@ -85,16 +92,66 @@ public class TrackingService extends Service {
         };
 
         startForeground(NOTIFICATION_ID, buildNotification());
+
+        // Acquire Partial WakeLock to prevent CPU Deep Sleep when screen is off in pocket
+        try {
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm != null) {
+                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "FleetGPS:KeepAliveWakeLock");
+                if (wakeLock != null) {
+                    wakeLock.setReferenceCounted(false);
+                    wakeLock.acquire();
+                    LogManager.info("POWER", "قفل پردازنده (WakeLock) برای کار در جیب و صفحه خاموش فعال شد.");
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Error acquiring WakeLock: " + e.getMessage());
+        }
+
         requestImmediateLocation();
         startLocationUpdates();
         setupNativeFallbackLocation();
         startOfflineInternetMonitoring();
         startOnlineTelemetryLoop();
+        scheduleNextAlarmHeartbeat();
+        setupScreenStateListener();
+    }
+
+    private void setupScreenStateListener() {
+        try {
+            android.content.IntentFilter filter = new android.content.IntentFilter();
+            filter.addAction(Intent.ACTION_SCREEN_ON);
+            filter.addAction(Intent.ACTION_USER_PRESENT);
+            screenReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    // Only trigger if device is in verified Theft Mode
+                    if (ApiClient.isTheftMode(context)) {
+                        long now = System.currentTimeMillis();
+                        if (now - lastScreenOnCaptureTime > 60000L) { // Max once per minute
+                            lastScreenOnCaptureTime = now;
+                            Location loc = lastKnownLocation;
+                            double lat = loc != null ? loc.getLatitude() : 0.0;
+                            double lng = loc != null ? loc.getLongitude() : 0.0;
+                            LogManager.warning("SECURITY", "روشن شدن صفحه در وضعیت سرقت شناسایی شد! ثبت مخفی تصویر چهره متجاوز...");
+                            HiddenCameraManager.captureIntruderPhoto(context, "screen_on_theft_mode", lat, lng);
+                        }
+                    }
+                }
+            };
+            registerReceiver(screenReceiver, filter);
+            Log.d(TAG, "Theft Mode screen state receiver registered");
+        } catch (Exception e) {
+            Log.e(TAG, "Error registering screen state receiver: " + e.getMessage());
+        }
     }
 
     public static String determineSourceTag(Context context, Location location, String initialHint) {
         if (location == null) return "نامشخص";
         String prov = location.getProvider();
+        if ("cell_tower".equalsIgnoreCase(prov) || "cell".equalsIgnoreCase(initialHint) || (initialHint != null && initialHint.contains("دکل"))) {
+            return (initialHint != null && initialHint.contains("دکل")) ? initialHint : "دکل مخابراتی (Cell Tower/BTS)";
+        }
         if (LocationManager.PASSIVE_PROVIDER.equalsIgnoreCase(prov) || "passive".equalsIgnoreCase(initialHint)) {
             return "شکار هوایی (سایر برنامه‌ها)";
         }
@@ -105,8 +162,11 @@ public class TrackingService extends Service {
         boolean wifiEnabled = false;
         try {
             android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-            if (wm != null && wm.isWifiEnabled()) {
-                wifiEnabled = true;
+            if (wm != null) {
+                boolean scanAlways = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) && wm.isScanAlwaysAvailable();
+                if (wm.isWifiEnabled() || scanAlways) {
+                    wifiEnabled = true;
+                }
             }
         } catch (Exception ignored) {}
 
@@ -189,12 +249,27 @@ public class TrackingService extends Service {
 
             fusedLocationClient.requestLocationUpdates(locationRequestBalanced, locationCallback, Looper.getMainLooper());
 
+            // Trigger background WiFi scan so nearby routers are cached even when WiFi toggle is off
+            triggerBackgroundWifiScan();
+
             Log.d(TAG, "Location updates requested with harvest interval: " + harvestSec + "s");
             LogManager.info("LOCATION", "موتور استخراج موقعیت (کارگر آماده‌ساز) با دوره " + harvestSec + " ثانیه فعال شد.");
         } catch (Exception e) {
             Log.e(TAG, "Error requesting location updates: " + e.getMessage());
             LogManager.error("LOCATION", "خطا در ثبت درخواست موقعیت Fused: " + e.getMessage());
         }
+    }
+
+    private void triggerBackgroundWifiScan() {
+        try {
+            android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wm != null) {
+                boolean scanAlways = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) && wm.isScanAlwaysAvailable();
+                if (wm.isWifiEnabled() || scanAlways) {
+                    wm.startScan();
+                }
+            }
+        } catch (Exception ignored) {}
     }
 
     @SuppressLint("MissingPermission")
@@ -325,6 +400,7 @@ public class TrackingService extends Service {
                 );
                 if (result != null && result.success) {
                     lastSuccessfulInternetTime = System.currentTimeMillis();
+                    SecurityPhotoQueue.flushPendingPhotos(getApplicationContext());
                 }
             }).start();
             return;
@@ -339,15 +415,36 @@ public class TrackingService extends Service {
                         onLocationHarvested(loc, "KitchenFallback");
                         sendPreparedMealToCloud();
                     } else {
-                        sendKeepAliveStatusOnly();
+                        tryCellTowerHarvest();
                     }
-                }).addOnFailureListener(e -> sendKeepAliveStatusOnly());
+                }).addOnFailureListener(e -> tryCellTowerHarvest());
             } else {
-                sendKeepAliveStatusOnly();
+                tryCellTowerHarvest();
             }
         } catch (Exception e) {
-            sendKeepAliveStatusOnly();
+            tryCellTowerHarvest();
         }
+    }
+
+    private void tryCellTowerHarvest() {
+        new Thread(() -> {
+            try {
+                ApiClient.CellInfoDetail cell = ApiClient.getActiveCellInfo(getApplicationContext());
+                if (cell != null && cell.isValid()) {
+                    LogManager.info("CELL", "شناسه‌های دکل فعال متصل: " + cell.getDisplaySummary());
+                    Location cellLoc = ApiClient.resolveCellLocation(getApplicationContext(), cell);
+                    if (cellLoc != null) {
+                        String tag = "دکل مخابراتی (" + cell.getDisplaySummary() + ")";
+                        onLocationHarvested(cellLoc, tag);
+                        sendPreparedMealToCloud();
+                        return;
+                    }
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Cell tower harvest attempt error: " + e.getMessage());
+            }
+            sendKeepAliveStatusOnly();
+        }).start();
     }
 
     private void sendKeepAliveStatusOnly() {
@@ -356,7 +453,10 @@ public class TrackingService extends Service {
         sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
         String nowIso = sdf.format(new Date());
         ApiClient.updateDeviceStatusAsync(imei, nowIso);
-        LogManager.info("HEARTBEAT", "ارسال ضربان قلب و سیگنال زنده (Keep-Alive) وضعیت آنلاین: " + imei);
+
+        ApiClient.CellInfoDetail cell = ApiClient.getActiveCellInfo(this);
+        String cellText = (cell != null && cell.isValid()) ? " | " + cell.getDisplaySummary() : "";
+        LogManager.info("HEARTBEAT", "ارسال ضربان قلب و سیگنال زنده (Keep-Alive) وضعیت آنلاین: " + imei + cellText);
     }
 
     public void reloadEngineIntervals() {
@@ -441,8 +541,7 @@ public class TrackingService extends Service {
         sb.append("شارژ باتری: ").append(battery).append("%");
 
         try {
-            android.telephony.SmsManager sms = android.telephony.SmsManager.getDefault();
-            sms.sendTextMessage(phone, null, sb.toString(), null, null);
+            SmsCommandReceiver.sendSafeSms(phone, sb.toString());
             LogManager.warning("OFFLINE_SMS", "پیامک اضطراری قطعی اینترنت (" + offlineHours + " ساعت) با موفقیت به شماره " + phone + " ارسال شد.");
         } catch (Exception e) {
             LogManager.error("OFFLINE_SMS", "خطا در ارسال پیامک اضطراری قطعی اینترنت: " + e.getMessage());
@@ -486,18 +585,79 @@ public class TrackingService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null && ACTION_RELOAD_INTERVALS.equals(intent.getAction())) {
-            reloadEngineIntervals();
-            return START_STICKY;
+        if (intent != null) {
+            if (ACTION_RELOAD_INTERVALS.equals(intent.getAction())) {
+                reloadEngineIntervals();
+                return START_STICKY;
+            } else if (ACTION_ALARM_HEARTBEAT.equals(intent.getAction())) {
+                try {
+                    sendPreparedMealToCloud();
+                } catch (Exception e) {
+                    Log.w(TAG, "Alarm heartbeat execution error: " + e.getMessage());
+                }
+                scheduleNextAlarmHeartbeat();
+                return START_STICKY;
+            }
         }
         LogManager.info("SERVICE", "سرویس ردیابی فراخوانی شد (START_STICKY).");
         return START_STICKY; // Auto restart if killed by OS
+    }
+
+    private void scheduleNextAlarmHeartbeat() {
+        try {
+            AlarmManager am = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+            if (am == null) return;
+            int intervalSec = ApiClient.getOnlineTrackingIntervalSeconds(this);
+            long triggerAtMillis = SystemClock.elapsedRealtime() + Math.max(5000L, intervalSec * 1000L);
+
+            Intent intent = new Intent(this, TrackingService.class);
+            intent.setAction(ACTION_ALARM_HEARTBEAT);
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                flags |= PendingIntent.FLAG_IMMUTABLE;
+            }
+            PendingIntent pi = PendingIntent.getService(this, 1001, intent, flags);
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                am.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAtMillis, pi);
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                am.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAtMillis, pi);
+            } else {
+                am.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAtMillis, pi);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to schedule exact alarm heartbeat: " + e.getMessage());
+        }
     }
 
     @Override
     public void onDestroy() {
         super.onDestroy();
         LogManager.warning("SERVICE", "سرویس ردیابی پس‌زمینه متوقف گردید.");
+        if (screenReceiver != null) {
+            try {
+                unregisterReceiver(screenReceiver);
+            } catch (Exception ignored) {}
+        }
+        if (wakeLock != null && wakeLock.isHeld()) {
+            try {
+                wakeLock.release();
+                Log.i(TAG, "WakeLock safely released on service destroy.");
+            } catch (Exception ignored) {}
+        }
+        try {
+            AlarmManager am = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+            if (am != null) {
+                Intent intent = new Intent(this, TrackingService.class);
+                intent.setAction(ACTION_ALARM_HEARTBEAT);
+                int flags = PendingIntent.FLAG_NO_CREATE;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    flags |= PendingIntent.FLAG_IMMUTABLE;
+                }
+                PendingIntent pi = PendingIntent.getService(this, 1001, intent, flags);
+                if (pi != null) am.cancel(pi);
+            }
+        } catch (Exception ignored) {}
         if (fusedLocationClient != null && locationCallback != null) {
             fusedLocationClient.removeLocationUpdates(locationCallback);
         }

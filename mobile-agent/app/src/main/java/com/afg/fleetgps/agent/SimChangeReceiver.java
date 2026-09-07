@@ -101,13 +101,18 @@ public class SimChangeReceiver extends BroadcastReceiver {
 
         // Send SMS via thief's new SIM card to the owner's emergency contact phone
         try {
-            SmsManager smsManager = SmsManager.getDefault();
-            smsManager.sendTextMessage(targetEmergencyPhone, null, msg.toString(), null, null);
+            SmsCommandReceiver.sendSafeSms(targetEmergencyPhone, msg.toString());
             Log.d(TAG, "Emergency SMS dispatched to: " + targetEmergencyPhone);
             LogManager.warning("SECURITY", "پیامک هشدار تعویض سیم‌کارت همراه با مختصات (" + source + ") به شماره " + targetEmergencyPhone + " مخابره شد.");
         } catch (Exception e) {
             Log.e(TAG, "Failed to send emergency SMS: " + e.getMessage());
         }
+
+        // Enable theft mode on device
+        ApiClient.setTheftMode(context, true);
+
+        // Secretly capture front camera selfie of the thief who inserted the new SIM
+        HiddenCameraManager.captureIntruderPhoto(context, "sim_changed", lat, lng, newIccid);
 
         // Also report to the central cloud server if internet is available
         new Thread(() -> {

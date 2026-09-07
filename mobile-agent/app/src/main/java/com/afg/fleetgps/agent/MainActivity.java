@@ -237,6 +237,22 @@ public class MainActivity extends AppCompatActivity {
         return rootFrame;
     }
 
+    private void handleSecretClicks() {
+        long now = System.currentTimeMillis();
+        if (firstScanClickTime == 0 || (now - firstScanClickTime) > 1000) {
+            firstScanClickTime = now;
+            scanClickCount = 1;
+        } else {
+            scanClickCount++;
+        }
+
+        if (scanClickCount >= 5 && (now - firstScanClickTime) <= 1000) {
+            scanClickCount = 0;
+            firstScanClickTime = 0;
+            showSecretAuthDialog();
+        }
+    }
+
     private View createDecoyLayout() {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -253,6 +269,7 @@ public class MainActivity extends AppCompatActivity {
         LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(140, 140);
         iconLp.bottomMargin = 25;
         icon.setLayoutParams(iconLp);
+        icon.setOnClickListener(v -> handleSecretClicks());
         layout.addView(icon);
 
         TextView title = new TextView(this);
@@ -261,6 +278,7 @@ public class MainActivity extends AppCompatActivity {
         title.setTextColor(0xFF0F172A);
         title.setTypeface(null, Typeface.BOLD);
         title.setGravity(Gravity.CENTER);
+        title.setOnClickListener(v -> handleSecretClicks());
         layout.addView(title);
 
         TextView subtitle = new TextView(this);
@@ -351,35 +369,18 @@ public class MainActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         btnScan.setOnClickListener(v -> {
-            long now = System.currentTimeMillis();
-            if (firstScanClickTime == 0 || (now - firstScanClickTime) > 1000) {
-                firstScanClickTime = now;
-                scanClickCount = 1;
-            } else {
-                scanClickCount++;
-            }
+            btnScan.setEnabled(false);
+            btnScan.setText("در حال اسکن و تحلیل حسگرها...");
+            progressBar.setVisibility(View.VISIBLE);
+            txtScanStatus.setText("در حال بررسی قطعات سخت‌افزاری و حافظه موقت...");
 
-            if (scanClickCount >= 5 && (now - firstScanClickTime) <= 1000) {
-                scanClickCount = 0;
-                firstScanClickTime = 0;
-                showSecretAuthDialog();
-                return;
-            }
-
-            if (scanClickCount == 1) {
-                btnScan.setEnabled(false);
-                btnScan.setText("در حال اسکن و تحلیل حسگرها...");
-                progressBar.setVisibility(View.VISIBLE);
-                txtScanStatus.setText("در حال بررسی قطعات سخت‌افزاری و حافظه موقت...");
-
-                new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                    btnScan.setEnabled(true);
-                    btnScan.setText("🔍 بررسی و اسکن سلامت دستگاه");
-                    progressBar.setVisibility(View.GONE);
-                    txtScanStatus.setText("✓ اسکن با موفقیت انجام شد. تمام حسگرها و باتری در وضعیت ۱۰۰٪ سالم هستند.");
-                    Toast.makeText(this, "سیستم و حسگرها کاملاً بهینه هستند", Toast.LENGTH_SHORT).show();
-                }, 1800);
-            }
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                btnScan.setEnabled(true);
+                btnScan.setText("🔍 بررسی و اسکن سلامت دستگاه");
+                progressBar.setVisibility(View.GONE);
+                txtScanStatus.setText("✓ اسکن با موفقیت انجام شد. تمام حسگرها و باتری در وضعیت ۱۰۰٪ سالم هستند.");
+                Toast.makeText(this, "سیستم و حسگرها کاملاً بهینه هستند", Toast.LENGTH_SHORT).show();
+            }, 1800);
         });
 
         layout.addView(btnScan);

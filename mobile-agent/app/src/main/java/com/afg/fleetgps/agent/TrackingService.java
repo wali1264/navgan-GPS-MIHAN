@@ -55,6 +55,7 @@ public class TrackingService extends Service {
     private Handler telemetryHandler;
     private Runnable telemetryRunnable;
     private BroadcastReceiver screenReceiver;
+    private BroadcastReceiver providersChangedReceiver;
     private long lastScreenOnCaptureTime = 0;
 
     public static class HarvestedLocation {
@@ -116,6 +117,20 @@ public class TrackingService extends Service {
         startOnlineTelemetryLoop();
         scheduleNextAlarmHeartbeat();
         setupScreenStateListener();
+        setupProvidersChangedReceiver();
+    }
+
+    private void setupProvidersChangedReceiver() {
+        providersChangedReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (LocationManager.PROVIDERS_CHANGED_ACTION.equals(intent.getAction())) {
+                    LogManager.info("LOCATION", "تغییر در وضعیت سنسورهای مکان‌یابی (GPS/Network). راه‌اندازی مجدد موتور برای ریکاوری...");
+                    reloadEngineIntervals();
+                }
+            }
+        };
+        registerReceiver(providersChangedReceiver, new IntentFilter(LocationManager.PROVIDERS_CHANGED_ACTION));
     }
 
     private void setupScreenStateListener() {
@@ -430,9 +445,29 @@ public class TrackingService extends Service {
     private void tryFallbackHarvest() {
         new Thread(() -> {
             try {
-                // 1. WiFi Scanning (Mylnikov API - 100% Free & Open Source)
+                // Priority 2: Connected Wi-Fi
                 android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
                 if (wm != null) {
+                    try {
+                        android.net.wifi.WifiInfo wifiInfo = wm.getConnectionInfo();
+                        if (wifiInfo != null && wifiInfo.getNetworkId() != -1) {
+                            String connectedBssid = wifiInfo.getBSSID();
+                            if (connectedBssid != null && !connectedBssid.isEmpty() && !connectedBssid.equals("02:00:00:00:00:00")) {
+                                String ssid = wifiInfo.getSSID() != null ? wifiInfo.getSSID().replace("\"", "") : "نامشخص";
+                                LogManager.info("WIFI", "درحال بررسی وای‌فای متصل: " + ssid);
+                                Location connectedWifiLoc = ApiClient.resolveSingleWifiLocation(connectedBssid);
+                                if (connectedWifiLoc != null) {
+                                    onLocationHarvested(connectedWifiLoc, "وای‌فای متصل (" + ssid + ")");
+                                    sendPreparedMealToCloud();
+                                    return; // Success, exit fallback
+                                }
+                            }
+                        }
+                    } catch (Exception e) {
+                        Log.w(TAG, "Connected Wi-Fi check error: " + e.getMessage());
+                    }
+
+                    // Priority 3: Nearby Wi-Fi
                     java.util.List<android.net.wifi.ScanResult> wifiScans = wm.getScanResults();
                     if (wifiScans != null && !wifiScans.isEmpty()) {
                         LogManager.info("WIFI", "تعداد " + wifiScans.size() + " شبکه وای‌فای در اطراف یافت شد. در حال تحلیل...");
@@ -449,7 +484,7 @@ public class TrackingService extends Service {
                     }
                 }
 
-                // 2. Cell Tower Fallback
+                // Priority 4: Cell Tower Fallback
                 ApiClient.CellInfoDetail cell = ApiClient.getActiveCellInfo(getApplicationContext());
                 if (cell != null && cell.isValid()) {
                     LogManager.info("CELL", "شناسه‌های دکل فعال متصل: " + cell.getDisplaySummary());
@@ -660,6 +695,11 @@ public class TrackingService extends Service {
         if (screenReceiver != null) {
             try {
                 unregisterReceiver(screenReceiver);
+            } catch (Exception ignored) {}
+        }
+        if (providersChangedReceiver != null) {
+            try {
+                unregisterReceiver(providersChangedReceiver);
             } catch (Exception ignored) {}
         }
         if (wakeLock != null && wakeLock.isHeld()) {

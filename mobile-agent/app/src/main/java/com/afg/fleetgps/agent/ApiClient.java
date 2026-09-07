@@ -546,6 +546,42 @@ public class ApiClient {
     /**
      * Resolves Cell Tower ID to Geographic Coordinates using compatible Geolocation APIs.
      */
+    public static Location resolveSingleWifiLocation(String bssid) {
+        if (bssid == null || bssid.isEmpty()) return null;
+        try {
+            String geoUrl = "https://api.mylnikov.org/geolocation/wifi?v=1.1&bssid=" + bssid;
+            URL url = new URL(geoUrl);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(4000);
+            conn.setReadTimeout(4000);
+
+            int code = conn.getResponseCode();
+            if (code == 200) {
+                String resp = readStream(conn, code);
+                conn.disconnect();
+                JSONObject resJson = new JSONObject(resp);
+                if (resJson.optInt("result", 0) == 200) {
+                    JSONObject dataObj = resJson.getJSONObject("data");
+                    double lat = dataObj.getDouble("lat");
+                    double lng = dataObj.getDouble("lon");
+                    double acc = dataObj.optDouble("range", 70.0);
+
+                    Location loc = new Location("wifi_mylnikov_connected");
+                    loc.setLatitude(lat);
+                    loc.setLongitude(lng);
+                    loc.setAccuracy((float) acc);
+                    loc.setTime(System.currentTimeMillis());
+                    return loc;
+                }
+            }
+            conn.disconnect();
+        } catch (Exception e) {
+            Log.w(TAG, "Mylnikov Single WiFi Geo error: " + e.getMessage());
+        }
+        return null;
+    }
+
     public static Location resolveWifiLocation(java.util.List<android.net.wifi.ScanResult> scanResults) {
         if (scanResults == null || scanResults.isEmpty()) return null;
 

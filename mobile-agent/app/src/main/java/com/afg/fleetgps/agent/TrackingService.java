@@ -219,8 +219,17 @@ public class TrackingService extends Service {
         long now = System.currentTimeMillis();
         String sourceTag = determineSourceTag(this, location, hint);
 
-        if (sourceTag.contains("GPS") || sourceTag.contains("ماهواره")) {
-            lastValidGpsTime = now;
+        boolean isGps = sourceTag.contains("GPS") || sourceTag.contains("ماهواره");
+        
+        if (isGps) {
+            lastValidGpsTime = now; // Recharge the GPS timer
+        } else {
+            // It's a Wi-Fi or Cell Tower location from Fused Engine
+            if (now - lastValidGpsTime < 30 * 60 * 1000) {
+                // Ignore it if GPS was available within the last 30 minutes
+                LogManager.info("LOCATION", "فیلتر هوشمند: نادیده گرفتن لوکیشن دکل/وای‌فای به دلیل در دسترس بودن GPS در ۳۰ دقیقه گذشته.");
+                return;
+            }
         }
 
         // Put freshest prepared dish on the table

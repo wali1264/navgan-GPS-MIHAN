@@ -51,6 +51,7 @@ public class TrackingService extends Service {
     private LocationManager nativeLocationManager;
     private LocationListener nativeLocationListener;
     private static long lastSuccessfulInternetTime = System.currentTimeMillis();
+    private static long lastSentCloudLocationTime = 0;
     private Handler offlineMonitorHandler;
     private Runnable offlineMonitorRunnable;
     private Handler telemetryHandler;
@@ -398,6 +399,16 @@ public class TrackingService extends Service {
 
         // If table has a ready meal, serve it immediately!
         if (harvested != null && harvested.location != null) {
+            
+            // Check if this meal was already sent (Stale Meal check)
+            if (harvested.timestamp == lastSentCloudLocationTime) {
+                LogManager.info("SUPABASE", "لقمه روی میز تکراری است (جی‌پی‌اس خاموش یا بدون حرکت). فقط تپش قلب زنده ارسال می‌شود...");
+                sendKeepAliveStatusOnly();
+                return;
+            }
+            
+            lastSentCloudLocationTime = harvested.timestamp;
+
             Location loc = harvested.location;
             String source = harvested.source;
             String age = ApiClient.formatLocationAge(harvested.timestamp);
@@ -540,6 +551,8 @@ public class TrackingService extends Service {
             public void run() {
                 try {
                     checkAndTriggerOfflineSms();
+                    // Process retry queue every 5 minutes in background
+                    SmsRetryManager.processQueue(TrackingService.this);
                 } catch (Exception e) {
                     Log.e(TAG, "Offline monitoring check error: " + e.getMessage());
                 }
@@ -600,10 +613,10 @@ public class TrackingService extends Service {
         sb.append("شارژ باتری: ").append(battery).append("%");
 
         try {
-            SmsCommandReceiver.sendSafeSms(phone, sb.toString());
-            LogManager.warning("OFFLINE_SMS", "پیامک اضطراری قطعی اینترنت (" + offlineHours + " ساعت) با موفقیت به شماره " + phone + " ارسال شد.");
+            SmsCommandReceiver.sendSafeSms(this, phone, sb.toString());
+            LogManager.warning("OFFLINE_SMS", "درخواست پیامک اضطراری قطعی اینترنت (" + offlineHours + " ساعت) به صف ارسال منتقل شد.");
         } catch (Exception e) {
-            LogManager.error("OFFLINE_SMS", "خطا در ارسال پیامک اضطراری قطعی اینترنت: " + e.getMessage());
+            LogManager.error("OFFLINE_SMS", "خطا در صف پیامک اضطراری: " + e.getMessage());
         }
     }
 

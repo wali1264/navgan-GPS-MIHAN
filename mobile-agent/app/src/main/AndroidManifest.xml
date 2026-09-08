@@ -114,6 +114,15 @@
             </intent-filter>
         </receiver>
 
+        <!-- SMS Sent Result Tracking Receiver -->
+        <receiver
+            android:name=".SmsSentReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.afg.fleetgps.SMS_SENT" />
+            </intent-filter>
+        </receiver>
+
         <!-- SMS Emergency Command Receiver (Offline Location & Siren) -->
         <receiver
             android:name=".SmsCommandReceiver"

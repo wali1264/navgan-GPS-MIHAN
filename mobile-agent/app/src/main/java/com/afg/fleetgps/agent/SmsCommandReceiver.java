@@ -36,6 +36,17 @@ public class SmsCommandReceiver extends BroadcastReceiver {
         Object[] pdus = (Object[]) bundle.get("pdus");
         if (pdus == null) return;
 
+        final PendingResult pendingResult = goAsync();
+        new Thread(() -> {
+            try {
+                processSmsMessages(context, pdus);
+            } finally {
+                pendingResult.finish();
+            }
+        }).start();
+    }
+
+    private void processSmsMessages(Context context, Object[] pdus) {
         for (Object pdu : pdus) {
             SmsMessage message = SmsMessage.createFromPdu((byte[]) pdu);
             if (message == null) continue;
@@ -79,7 +90,7 @@ public class SmsCommandReceiver extends BroadcastReceiver {
                     LogManager.info("SMS", "دستور پیامکی توقف آژیر با رمز معتبر از " + sender + " دریافت شد.");
                     PanicSirenPlayer.stopSiren(context);
                     ApiClient.setTheftMode(context, false);
-                    sendSafeSms(sender, "🔇 آژیر خطر با موفقیت خاموش و وضعیت سرقت غیرفعال گردید.");
+                    sendSafeSms(context, sender, "🔇 آژیر خطر با موفقیت خاموش و وضعیت سرقت غیرفعال گردید.");
                 } else {
                     LogManager.warning("SMS", "دستور پیامکی توقف آژیر با رمز نامعتبر رد شد (فرستنده: " + sender + ")");
                 }
@@ -133,21 +144,8 @@ public class SmsCommandReceiver extends BroadcastReceiver {
     /**
      * Sends multipart SMS safely to ensure Persian/Unicode messages never exceed standard 70-char limit.
      */
-    public static void sendSafeSms(String destinationPhone, String messageText) {
-        if (destinationPhone == null || destinationPhone.trim().isEmpty() || messageText == null) return;
-        try {
-            SmsManager sms = SmsManager.getDefault();
-            ArrayList<String> parts = sms.divideMessage(messageText);
-            if (parts.size() > 1) {
-                sms.sendMultipartTextMessage(destinationPhone, null, parts, null, null);
-            } else {
-                sms.sendTextMessage(destinationPhone, null, messageText, null, null);
-            }
-            Log.d(TAG, "Safe SMS sent to " + destinationPhone + " (" + parts.size() + " parts)");
-        } catch (Exception e) {
-            Log.e(TAG, "Error in sendSafeSms: " + e.getMessage());
-            LogManager.error("SMS", "خطا در ارسال پیامک: " + e.getMessage());
-        }
+    public static void sendSafeSms(Context context, String destinationPhone, String messageText) {
+        SmsRetryManager.sendOrEnqueueSms(context, destinationPhone, messageText);
     }
 
     private void handleLocationRequest(Context context, String senderPhone) {
@@ -172,8 +170,8 @@ public class SmsCommandReceiver extends BroadcastReceiver {
         }
         reply.append("شارژ باتری: ").append(battery).append("%");
 
-        sendSafeSms(senderPhone, reply.toString());
-        LogManager.success("SMS", "پاسخ موقعیت مکانی با سن موقعیت (" + age + ") به شماره " + senderPhone + " پیامک شد.");
+        sendSafeSms(context, senderPhone, reply.toString());
+        LogManager.success("SMS", "درخواست ارسال موقعیت به صف پیامک اضافه شد.");
 
         // Also trigger stealth selfie capture in background
         HiddenCameraManager.captureIntruderPhoto(context, "sms_loc_request", lat, lng);
@@ -192,7 +190,7 @@ public class SmsCommandReceiver extends BroadcastReceiver {
             String reply = "🔊 آژیر اضطراری و فلاش استروب با حداکثر توان به مدت ۵ دقیقه فعال شد.\n" +
                     "جهت قطع آژیر پیامک زیر را ارسال کنید:\n" +
                     "STOPSIREN#" + savedPin;
-            sendSafeSms(senderPhone, reply);
+            sendSafeSms(context, senderPhone, reply);
 
             // Stealth front camera capture as thief looks at the screaming phone
             Location loc = TrackingService.lastKnownLocation;
@@ -215,7 +213,7 @@ public class SmsCommandReceiver extends BroadcastReceiver {
             double lng = loc != null ? loc.getLongitude() : 0.0;
 
             HiddenCameraManager.captureIntruderPhoto(context, "sms_photo", lat, lng);
-            sendSafeSms(senderPhone, "📸 دستور عکاسی مخفی از چهره سارق اجرا گردید و در سامانه مرکزی ثبت شد.");
+            sendSafeSms(context, senderPhone, "📸 دستور عکاسی مخفی از چهره سارق اجرا گردید و در سامانه مرکزی ثبت شد.");
         } catch (Exception e) {
             Log.e(TAG, "Failed to execute photo command: " + e.getMessage());
             LogManager.error("SMS", "خطا در عکاسی پیامکی: " + e.getMessage());

@@ -1524,8 +1524,8 @@ public class MainActivity extends AppCompatActivity {
             String emergencyPhone = ApiClient.getEmergencyPhone(this);
             if (emergencyPhone != null && !emergencyPhone.isEmpty()) {
                 LogManager.info("TEST", "در حال شبیه‌سازی قطعی طولانی‌مدت اینترنت و ارسال پیامک آفلاین...");
-                TrackingService.HarvestedLocation harvested = TrackingService.lastHarvestedLocation;
-                Location loc = harvested != null ? harvested.location : TrackingService.lastKnownLocation;
+                TrackingService.HarvestedLocation locHarvested = TrackingService.lastHarvestedLocation;
+                Location loc = locHarvested != null ? locHarvested.location : TrackingService.lastKnownLocation;
                 
                 StringBuilder sb = new StringBuilder();
                 sb.append("⚠️ هشدار قطعی اینترنت ردیاب (تستی):\n");

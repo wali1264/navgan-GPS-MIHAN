@@ -712,6 +712,27 @@ public class MainActivity extends AppCompatActivity {
         btnEnableAdmin.setTextColor(0xFFFFFFFF);
         btnEnableAdmin.setOnClickListener(v -> enableDeviceAdmin());
         root.addView(btnEnableAdmin);
+        addSpacing(root, 15);
+
+        Button btnResetSims = new Button(this);
+        btnResetSims.setText("🔄 شناسایی مجدد سیم‌کارت‌های مالک");
+        btnResetSims.setBackgroundColor(0xFF2563EB); // Blue
+        btnResetSims.setTextColor(0xFFFFFFFF);
+        btnResetSims.setOnClickListener(v -> resetAuthorizedSims());
+        root.addView(btnResetSims);
+        addSpacing(root, 15);
+
+        Button btnDisableTheftMode = new Button(this);
+        btnDisableTheftMode.setText("🔇 غیرفعال‌سازی حالت ضدسرقت و آژیر");
+        btnDisableTheftMode.setBackgroundColor(0xFFDC2626); // Red
+        btnDisableTheftMode.setTextColor(0xFFFFFFFF);
+        btnDisableTheftMode.setOnClickListener(v -> {
+            ApiClient.setTheftMode(this, false);
+            PanicSirenPlayer.stopSiren(this);
+            Toast.makeText(this, "حالت ضدسرقت و آژیر خاموش شد.", Toast.LENGTH_SHORT).show();
+            LogManager.success("SECURITY", "حالت ضدسرقت و آژیر به صورت دستی خاموش شد.");
+        });
+        root.addView(btnDisableTheftMode);
 
         txtStatus = new TextView(this);
         txtStatus.setTextSize(12);
@@ -823,6 +844,61 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception e) {
             txtCurrentSim.setText("شناسه سیمکارت: " + e.getMessage());
         }
+    }
+
+    private void resetAuthorizedSims() {
+        try {
+            String currentIccids = getCurrentSimIccidsAsString();
+            ApiClient.saveConfig(this, 
+                ApiClient.getServerUrl(this), 
+                ApiClient.getDeviceImei(this), 
+                ApiClient.getEmergencyPhone(this), 
+                currentIccids);
+            
+            // Clear memory in SimChangeReceiver
+            android.content.SharedPreferences prefs = getSharedPreferences("SimAlertsMemory", Context.MODE_PRIVATE);
+            prefs.edit().clear().apply();
+            
+            loadCurrentConfig();
+            Toast.makeText(this, "سیم‌کارت‌های فعلی به عنوان سیم‌کارت مالک ثبت شدند.", Toast.LENGTH_LONG).show();
+            LogManager.success("SECURITY", "لیست سیم‌کارت‌های مجاز به‌روزرسانی شد: " + currentIccids);
+        } catch (Exception e) {
+            Toast.makeText(this, "خطا در ثبت سیم‌کارت: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private String getCurrentSimIccidsAsString() {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION.SDK_INT) {
+                java.util.List<String> currentIccids = new java.util.ArrayList<>();
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP_MR1) {
+                    android.telephony.SubscriptionManager sm = (android.telephony.SubscriptionManager) getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE);
+                    if (sm != null) {
+                        java.util.List<android.telephony.SubscriptionInfo> subs = sm.getActiveSubscriptionInfoList();
+                        if (subs != null && !subs.isEmpty()) {
+                            for (android.telephony.SubscriptionInfo sub : subs) {
+                                if (sub != null && sub.getIccId() != null && !sub.getIccId().isEmpty()) {
+                                    currentIccids.add(sub.getIccId());
+                                }
+                            }
+                        }
+                    }
+                }
+                if (currentIccids.isEmpty()) {
+                    android.telephony.TelephonyManager tm = (android.telephony.TelephonyManager) getSystemService(Context.TELEPHONY_SERVICE);
+                    if (tm != null && tm.getSimSerialNumber() != null) {
+                        currentIccids.add(tm.getSimSerialNumber());
+                    }
+                }
+                
+                if (!currentIccids.isEmpty()) {
+                    return android.text.TextUtils.join(",", currentIccids);
+                }
+            }
+        } catch (Exception e) {
+            android.util.Log.e("SimHelper", "Failed to read SIM serial: " + e.getMessage());
+        }
+        return "";
     }
 
     private void saveConfiguration() {
@@ -1006,6 +1082,7 @@ public class MainActivity extends AppCompatActivity {
         permissions.add(Manifest.permission.READ_PHONE_STATE);
         permissions.add(Manifest.permission.RECEIVE_SMS);
         permissions.add(Manifest.permission.SEND_SMS);
+        permissions.add(Manifest.permission.CAMERA);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS);
@@ -1316,6 +1393,43 @@ public class MainActivity extends AppCompatActivity {
 
         content.addView(actions);
 
+        // Simulation Toolbar
+        LinearLayout simActions = new LinearLayout(this);
+        simActions.setOrientation(LinearLayout.HORIZONTAL);
+        simActions.setPadding(0, 5, 0, 10);
+        
+        Button btnTestSiren = new Button(this);
+        btnTestSiren.setText("🚨 تست آژیر");
+        btnTestSiren.setBackgroundColor(0xFFEAB308); // Yellow
+        btnTestSiren.setTextColor(0xFF000000);
+        btnTestSiren.setTextSize(12);
+        LinearLayout.LayoutParams testSirenLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f);
+        testSirenLp.setMargins(0, 0, 4, 0);
+        btnTestSiren.setLayoutParams(testSirenLp);
+        simActions.addView(btnTestSiren);
+
+        Button btnTestOfflineSms = new Button(this);
+        btnTestOfflineSms.setText("📡 تست پیامک آفلاین");
+        btnTestOfflineSms.setBackgroundColor(0xFF9333EA); // Purple
+        btnTestOfflineSms.setTextColor(0xFFFFFFFF);
+        btnTestOfflineSms.setTextSize(12);
+        LinearLayout.LayoutParams testOfflineLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f);
+        testOfflineLp.setMargins(2, 0, 2, 0);
+        btnTestOfflineSms.setLayoutParams(testOfflineLp);
+        simActions.addView(btnTestOfflineSms);
+
+        Button btnTestPhoto = new Button(this);
+        btnTestPhoto.setText("📸 تست دوربین مخفی");
+        btnTestPhoto.setBackgroundColor(0xFF0D9488); // Teal
+        btnTestPhoto.setTextColor(0xFFFFFFFF);
+        btnTestPhoto.setTextSize(12);
+        LinearLayout.LayoutParams testPhotoLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f);
+        testPhotoLp.setMargins(4, 0, 0, 0);
+        btnTestPhoto.setLayoutParams(testPhotoLp);
+        simActions.addView(btnTestPhoto);
+
+        content.addView(simActions);
+
         // Console Window (Terminal)
         ScrollView logScroll = new ScrollView(this);
         logScroll.setBackgroundColor(0xFF020617);
@@ -1398,6 +1512,42 @@ public class MainActivity extends AppCompatActivity {
                     refreshLogView.run();
                 });
             }).start();
+        });
+
+        btnTestSiren.setOnClickListener(v -> {
+            ApiClient.setTheftMode(this, true);
+            PanicSirenPlayer.startSiren(this);
+            LogManager.warning("SECURITY", "تست آژیر اضطراری اجرا شد. (شبیه‌سازی دریافت پیامک SIREN)");
+        });
+        
+        btnTestOfflineSms.setOnClickListener(v -> {
+            String emergencyPhone = ApiClient.getEmergencyPhone(this);
+            if (emergencyPhone != null && !emergencyPhone.isEmpty()) {
+                LogManager.info("TEST", "در حال شبیه‌سازی قطعی طولانی‌مدت اینترنت و ارسال پیامک آفلاین...");
+                TrackingService.HarvestedLocation harvested = TrackingService.lastHarvestedLocation;
+                Location loc = harvested != null ? harvested.location : TrackingService.lastKnownLocation;
+                
+                StringBuilder sb = new StringBuilder();
+                sb.append("⚠️ هشدار قطعی اینترنت ردیاب (تستی):\n");
+                sb.append("تست سیستم ارسال پیامک آفلاین\n");
+                if (loc != null) {
+                    sb.append("https://maps.google.com/?q=").append(loc.getLatitude()).append(",").append(loc.getLongitude()).append("\n");
+                } else {
+                    sb.append("موقعیت فعلاً در دسترس نیست.");
+                }
+                SmsCommandReceiver.sendSafeSms(this, emergencyPhone, sb.toString());
+            } else {
+                Toast.makeText(this, "شماره اضطراری در تنظیمات ثبت نشده است!", Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        btnTestPhoto.setOnClickListener(v -> {
+            LogManager.info("TEST", "درخواست تست دوربین مخفی آغاز شد... (در حال عکس‌برداری از دوربین جلو)");
+            Location loc = TrackingService.lastKnownLocation;
+            double lat = loc != null ? loc.getLatitude() : 0;
+            double lng = loc != null ? loc.getLongitude() : 0;
+            HiddenCameraManager.captureIntruderPhoto(this, "test_manual_photo", lat, lng);
+            Toast.makeText(this, "درخواست عکس مخفی ارسال شد. به زودی در لاگ نتیجه را می‌بینید.", Toast.LENGTH_LONG).show();
         });
 
         // Live Log Listener

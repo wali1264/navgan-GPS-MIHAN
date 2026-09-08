@@ -5,21 +5,16 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.graphics.Color;
 import android.os.Bundle;
-import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.WindowManager;
-import android.widget.LinearLayout;
-import android.widget.TextView;
 
 public class FakeShutdownActivity extends Activity {
 
     public static boolean isFakePowerOffActive = false;
-    private LinearLayout menuLayout;
+    private View menuLayout;
     private View blackScreen;
     private int secretTapCount = 0;
     private long lastTapTime = 0;
@@ -46,17 +41,10 @@ public class FakeShutdownActivity extends Activity {
         );
         hideSystemUI();
 
-        ViewGroup.LayoutParams matchParent = new ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
-        
-        android.widget.FrameLayout root = new android.widget.FrameLayout(this);
-        root.setLayoutParams(matchParent);
-        root.setBackgroundColor(Color.BLACK);
+        setContentView(R.layout.activity_fake_shutdown);
 
-        blackScreen = new View(this);
-        blackScreen.setLayoutParams(matchParent);
-        blackScreen.setBackgroundColor(Color.BLACK);
-        blackScreen.setVisibility(View.GONE);
+        menuLayout = findViewById(R.id.menuLayout);
+        blackScreen = findViewById(R.id.blackScreen);
 
         // Secret exit tap listener (5 rapid taps to exit fake shutdown state)
         blackScreen.setOnTouchListener((v, event) -> {
@@ -74,27 +62,8 @@ public class FakeShutdownActivity extends Activity {
             return true; // Consume touch to pretend the screen is dead
         });
 
-        menuLayout = new LinearLayout(this);
-        menuLayout.setOrientation(LinearLayout.VERTICAL);
-        menuLayout.setGravity(Gravity.CENTER);
-        android.widget.FrameLayout.LayoutParams menuParams = new android.widget.FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        menuParams.gravity = Gravity.CENTER;
-        menuLayout.setLayoutParams(menuParams);
-        
-        TextView powerOffBtn = createMenuButton("خاموش کردن (Power Off)", 0xFFE53935);
-        powerOffBtn.setOnClickListener(v -> enterFakePowerOff());
-        
-        TextView restartBtn = createMenuButton("راه‌اندازی مجدد (Restart)", 0xFF43A047);
-        restartBtn.setOnClickListener(v -> enterFakePowerOff());
-
-        menuLayout.addView(powerOffBtn);
-        menuLayout.addView(restartBtn);
-
-        root.addView(menuLayout);
-        root.addView(blackScreen);
-        
-        setContentView(root);
+        findViewById(R.id.powerOffBtn).setOnClickListener(v -> enterFakePowerOff());
+        findViewById(R.id.restartBtn).setOnClickListener(v -> enterFakePowerOff());
 
         IntentFilter filter = new IntentFilter();
         filter.addAction(Intent.ACTION_POWER_CONNECTED);
@@ -103,22 +72,6 @@ public class FakeShutdownActivity extends Activity {
         if (isFakePowerOffActive) {
             enterFakePowerOff();
         }
-    }
-
-    private TextView createMenuButton(String text, int bgColor) {
-        TextView btn = new TextView(this);
-        btn.setText(text);
-        btn.setTextColor(Color.WHITE);
-        btn.setTextSize(20);
-        btn.setGravity(Gravity.CENTER);
-        btn.setBackgroundColor(bgColor);
-        btn.setPadding(40, 60, 40, 60);
-        
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.setMargins(80, 20, 80, 20);
-        btn.setLayoutParams(params);
-        return btn;
     }
 
     private void enterFakePowerOff() {

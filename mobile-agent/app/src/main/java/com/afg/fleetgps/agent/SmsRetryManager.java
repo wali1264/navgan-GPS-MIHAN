@@ -30,6 +30,7 @@ public class SmsRetryManager {
             item.put("phone", phone);
             item.put("text", text);
             item.put("attempts", 0);
+            item.put("sim_index", 0);
             queue.put(item);
             prefs.edit().putString(KEY_QUEUE, queue.toString()).apply();
             
@@ -56,9 +57,10 @@ public class SmsRetryManager {
                 String phone = item.getString("phone");
                 String text = item.getString("text");
                 int attempts = item.optInt("attempts", 0);
+                int simIndex = item.optInt("sim_index", 0);
 
                 if (attempts < 12) { // 12 attempts over time (e.g. 1 hour total if 5 min intervals)
-                    attemptSendNow(context, phone, text, id);
+                    attemptSendNow(context, phone, text, id, simIndex);
                     item.put("attempts", attempts + 1);
                     newQueue.put(item);
                     changes = true;
@@ -75,9 +77,31 @@ public class SmsRetryManager {
         }
     }
 
-    private static void attemptSendNow(Context context, String phone, String text, String id) {
+    private static void attemptSendNow(Context context, String phone, String text, String id, int simIndex) {
         try {
             SmsManager sms = SmsManager.getDefault();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+                android.telephony.SubscriptionManager sm = (android.telephony.SubscriptionManager) context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE);
+                if (sm != null) {
+                    try {
+                        java.util.List<android.telephony.SubscriptionInfo> subs = sm.getActiveSubscriptionInfoList();
+                        if (subs != null && !subs.isEmpty()) {
+                            int safeIndex = simIndex % subs.size();
+                            android.telephony.SubscriptionInfo sub = subs.get(safeIndex);
+                            int subId = sub.getSubscriptionId();
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                sms = context.getSystemService(SmsManager.class).createForSubscriptionId(subId);
+                            } else {
+                                sms = SmsManager.getSmsManagerForSubscriptionId(subId);
+                            }
+                            LogManager.info("SMS", "تلاش برای ارسال پیامک از سیم‌کارت شماره " + (safeIndex + 1));
+                        }
+                    } catch (SecurityException e) {
+                        Log.e(TAG, "Missing permission to read subscription info");
+                    }
+                }
+            }
+
             Intent sentIntent = new Intent(ACTION_SMS_SENT);
             sentIntent.setPackage(context.getPackageName()); // Explicit for security and Android 11+
             sentIntent.putExtra("msg_id", id);
@@ -119,8 +143,26 @@ public class SmsRetryManager {
                 case SmsManager.RESULT_ERROR_NULL_PDU: errorName = "فرمت نامعتبر"; break;
                 case SmsManager.RESULT_ERROR_RADIO_OFF: errorName = "گوشی در حالت پرواز است"; break;
             }
-            LogManager.error("SMS", "ارسال پیامک مسدود شد (" + errorName + "). نگهداری در صندوق برای تلاش بعدی...");
+            LogManager.error("SMS", "ارسال پیامک مسدود شد (" + errorName + "). تلاش بعدی از طریق سیم‌کارت دیگر (در صورت وجود)...");
+            incrementSimIndexForRetry(context, id);
         }
+    }
+
+    private static void incrementSimIndexForRetry(Context context, String id) {
+        try {
+            SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+            JSONArray queue = new JSONArray(prefs.getString(KEY_QUEUE, "[]"));
+            JSONArray newQueue = new JSONArray();
+            for (int i = 0; i < queue.length(); i++) {
+                JSONObject item = queue.getJSONObject(i);
+                if (id.equals(item.getString("id"))) {
+                    int simIndex = item.optInt("sim_index", 0);
+                    item.put("sim_index", simIndex + 1);
+                }
+                newQueue.put(item);
+            }
+            prefs.edit().putString(KEY_QUEUE, newQueue.toString()).apply();
+        } catch (Exception ignored) {}
     }
 
     private static void removeSentMessage(Context context, String id) {

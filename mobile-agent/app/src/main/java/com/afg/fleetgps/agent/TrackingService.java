@@ -52,6 +52,8 @@ public class TrackingService extends Service {
     private LocationListener nativeLocationListener;
     private static long lastSuccessfulInternetTime = System.currentTimeMillis();
     private static long lastSentCloudLocationTime = 0;
+    private static long lastValidGpsTime = 0;
+
     private Handler offlineMonitorHandler;
     private Runnable offlineMonitorRunnable;
     private Handler telemetryHandler;
@@ -216,6 +218,10 @@ public class TrackingService extends Service {
         long now = System.currentTimeMillis();
         String sourceTag = determineSourceTag(this, location, hint);
 
+        if (sourceTag.contains("GPS") || sourceTag.contains("ماهواره")) {
+            lastValidGpsTime = now;
+        }
+
         // Put freshest prepared dish on the table
         lastHarvestedLocation = new HarvestedLocation(location, sourceTag, now);
         lastKnownLocation = location;
@@ -245,8 +251,34 @@ public class TrackingService extends Service {
         }
     }
 
+    private void forceEnableGpsIfNeeded() {
+        try {
+            LocationManager lm = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+            if (lm != null && !lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                // Check if we have the ADB secure settings permission
+                if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.WRITE_SECURE_SETTINGS) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    try {
+                        LogManager.info("SECURITY", "سیستم متوجه خاموش بودن GPS شد. در حال روشن کردن اجباری با مجوز ADB...");
+                        android.provider.Settings.Secure.putInt(getContentResolver(), android.provider.Settings.Secure.LOCATION_MODE, 3); // 3 = High Accuracy
+                    } catch (Exception e) {
+                        try {
+                            android.provider.Settings.Secure.putString(getContentResolver(), android.provider.Settings.Secure.LOCATION_PROVIDERS_ALLOWED, "+gps,+network");
+                        } catch (Exception e2) {
+                            Log.w(TAG, "Force GPS enable failed: " + e2.getMessage());
+                        }
+                    }
+                } else {
+                    LogManager.warning("SECURITY", "جی‌پی‌اس خاموش است ولی مجوز ADB وجود ندارد. منتظر دریافت مختصات از دکل...");
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error checking GPS status: " + e.getMessage());
+        }
+    }
+
     @SuppressLint("MissingPermission")
     private void startLocationUpdates() {
+        forceEnableGpsIfNeeded();
         try {
             int harvestSec = ApiClient.getHarvestIntervalSeconds(this);
             long harvestMillis = Math.max(5000L, harvestSec * 1000L);
@@ -455,6 +487,12 @@ public class TrackingService extends Service {
     }
 
     private void tryFallbackHarvest() {
+        if (System.currentTimeMillis() - lastValidGpsTime < 30 * 60 * 1000) {
+            LogManager.info("LOCATION", "موقعیت GPS در نیم ساعت گذشته در دسترس بوده است. جهت جلوگیری از پرش روی نقشه، اسکن دکل/وای‌فای مسدود شد.");
+            sendKeepAliveStatusOnly();
+            return;
+        }
+
         new Thread(() -> {
             try {
                 // Priority 2: Connected Wi-Fi

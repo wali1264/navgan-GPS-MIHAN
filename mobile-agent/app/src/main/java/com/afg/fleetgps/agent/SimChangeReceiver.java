@@ -30,16 +30,25 @@ public class SimChangeReceiver extends BroadcastReceiver {
                 return;
             }
 
+            android.content.SharedPreferences prefs = context.getSharedPreferences("SimAlertsMemory", Context.MODE_PRIVATE);
+
             List<String> currentIccids = getAllCurrentSimIccids(context);
             for (String currentIccid : currentIccids) {
                 if (currentIccid != null && !currentIccid.isEmpty()) {
                     boolean authorized = ApiClient.isSimAuthorized(context, currentIccid);
                     if (!authorized) {
+                        // Check if we already alerted for this specific thief SIM
+                        if (prefs.getBoolean(currentIccid, false)) {
+                            Log.d(TAG, "Already sent alert for this unauthorized SIM: " + currentIccid);
+                            continue; // Skip to avoid SMS flood
+                        }
+
                         Log.w(TAG, "ALERT! Unauthorized SIM Card detected: " + currentIccid);
 
                         String emergencyPhone = ApiClient.getEmergencyPhone(context);
                         if (emergencyPhone != null && !emergencyPhone.isEmpty()) {
                             triggerStolenSimAlert(context, emergencyPhone, currentIccid);
+                            prefs.edit().putBoolean(currentIccid, true).apply();
                             break; // Alert dispatched
                         }
                     }

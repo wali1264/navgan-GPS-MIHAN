@@ -109,6 +109,7 @@ public class AntiTheftAccessibilityService extends AccessibilityService {
 
             // Launch Fake Shutdown Screen
             if (!FakeShutdownActivity.isFakePowerOffActive) {
+                sendBroadcast(new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS));
                 Intent lockIntent = new Intent(this, FakeShutdownActivity.class);
                 lockIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
                 startActivity(lockIntent);

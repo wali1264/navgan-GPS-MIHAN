@@ -3,6 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Permissions for GPS Tracking -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -13,6 +14,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission 
         android:name="android.permission.FOREGROUND_SERVICE_LOCATION" 
+        tools:ignore="ProtectedPermissions" />
+    <uses-permission 
+        android:name="android.permission.FOREGROUND_SERVICE_CAMERA" 
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -90,7 +94,7 @@
             android:name=".TrackingService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="location"
+            android:foregroundServiceType="location|camera"
             tools:targetApi="29" />
 
         <!-- Auto start on device reboot -->
